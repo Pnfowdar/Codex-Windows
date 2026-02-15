@@ -9,7 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Ensure-Command([string]$Name) {
+function Test-Command([string]$Name) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "$Name not found."
   }
@@ -33,8 +33,8 @@ function Resolve-7z([string]$BaseDir) {
   New-Item -ItemType Directory -Force -Path $tools | Out-Null
   $sevenZipDir = Join-Path $tools "7zip"
   New-Item -ItemType Directory -Force -Path $sevenZipDir | Out-Null
-  $home = "https://www.7-zip.org/"
-  try { $html = (Invoke-WebRequest -Uri $home -UseBasicParsing).Content } catch { return $null }
+  $homeUrl = "https://www.7-zip.org/"
+  try { $html = (Invoke-WebRequest -Uri $homeUrl -UseBasicParsing).Content } catch { return $null }
   $extra = [regex]::Match($html, 'href="a/(7z[0-9]+-extra\.7z)"').Groups[1].Value
   if (-not $extra) { return $null }
   $extraUrl = "https://www.7-zip.org/a/$extra"
@@ -69,24 +69,51 @@ function Resolve-CodexCliPath([string]$Explicit) {
     if ($whereCmd) { $candidates += $whereCmd }
   } catch {}
 
+  # Collect all npm global root directories to search
+  $npmRoots = @()
   try {
     $npmRoot = (& npm root -g 2>$null).Trim()
-    if ($npmRoot) {
-      $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
-      $candidates += (Join-Path $npmRoot "@openai\codex\vendor\$arch\codex\codex.exe")
-      $candidates += (Join-Path $npmRoot "@openai\codex\vendor\x86_64-pc-windows-msvc\codex\codex.exe")
-      $candidates += (Join-Path $npmRoot "@openai\codex\vendor\aarch64-pc-windows-msvc\codex\codex.exe")
+    if ($npmRoot) { $npmRoots += $npmRoot }
+  } catch {}
+
+  # fnm stores real global packages in its persistent node-versions directory.
+  # npm root -g under fnm returns a transient multishell symlink, so also check the real path.
+  try {
+    $fnmBase = Join-Path $env:APPDATA "fnm\node-versions"
+    if (Test-Path $fnmBase) {
+      $nodeVer = (& node --version 2>$null).Trim()
+      if ($nodeVer) {
+        $fnmRoot = Join-Path $fnmBase "$nodeVer\installation\node_modules"
+        if ((Test-Path $fnmRoot) -and ($npmRoots -notcontains $fnmRoot)) {
+          $npmRoots += $fnmRoot
+        }
+      }
     }
   } catch {}
+
+  $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+  foreach ($root in $npmRoots) {
+    # Legacy path: @openai/codex/vendor/<arch>/codex/codex.exe
+    $candidates += (Join-Path $root "@openai\codex\vendor\$arch\codex\codex.exe")
+    $candidates += (Join-Path $root "@openai\codex\vendor\x86_64-pc-windows-msvc\codex\codex.exe")
+    $candidates += (Join-Path $root "@openai\codex\vendor\aarch64-pc-windows-msvc\codex\codex.exe")
+    # New structure: search recursively through entire @openai dir for platform-specific packages
+    $openaiDir = Join-Path $root "@openai"
+    if (Test-Path $openaiDir) {
+      $found = Get-ChildItem -Path $openaiDir -Recurse -Filter "codex.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($found) { $candidates += $found.FullName }
+    }
+  }
 
   foreach ($c in $candidates) {
     if (-not $c) { continue }
     if ($c -match '\.cmd$' -and (Test-Path $c)) {
       try {
         $cmdDir = Split-Path $c -Parent
-        $vendor = Join-Path $cmdDir "node_modules\@openai\codex\vendor"
-        if (Test-Path $vendor) {
-          $found = Get-ChildItem -Recurse -Filter "codex.exe" $vendor -ErrorAction SilentlyContinue | Select-Object -First 1
+        # Search entire @openai dir to handle both legacy and new package structures
+        $openaiDir = Join-Path $cmdDir "node_modules\@openai"
+        if (Test-Path $openaiDir) {
+          $found = Get-ChildItem -Recurse -Filter "codex.exe" $openaiDir -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($found) { return (Resolve-Path $found.FullName).Path }
         }
       } catch {}
@@ -103,7 +130,18 @@ function Write-Header([string]$Text) {
   Write-Host "`n=== $Text ===" -ForegroundColor Cyan
 }
 
-function Patch-Preload([string]$AppDir) {
+function Get-ProfileSuffix([string]$CodexHome) {
+  if (-not $CodexHome) { return $null }
+  $leaf = Split-Path -Path $CodexHome -Leaf
+  if (-not $leaf) { $leaf = $CodexHome }
+  $suffix = $leaf.ToLowerInvariant()
+  $suffix = $suffix -replace '[^a-z0-9_-]', '-'
+  $suffix = $suffix.Trim('-')
+  if (-not $suffix) { return $null }
+  return $suffix
+}
+
+function Update-Preload([string]$AppDir) {
   $preload = Join-Path $AppDir ".vite\build\preload.js"
   if (-not (Test-Path $preload)) { return }
   $raw = Get-Content -Raw $preload
@@ -118,7 +156,7 @@ function Patch-Preload([string]$AppDir) {
 }
 
 
-function Ensure-GitOnPath() {
+function Add-GitToPath() {
   $candidates = @(
     (Join-Path $env:ProgramFiles "Git\cmd\git.exe"),
     (Join-Path $env:ProgramFiles "Git\bin\git.exe"),
@@ -132,9 +170,9 @@ function Ensure-GitOnPath() {
   }
 }
 
-Ensure-Command node
-Ensure-Command npm
-Ensure-Command npx
+Test-Command node
+Test-Command npm
+Test-Command npx
 
 foreach ($k in @("npm_config_runtime","npm_config_target","npm_config_disturl","npm_config_arch","npm_config_build_from_source")) {
   if (Test-Path "Env:$k") { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
@@ -155,7 +193,8 @@ if (-not $DmgPath) {
 }
 
 $DmgPath = (Resolve-Path $DmgPath).Path
-$WorkDir = (Resolve-Path (New-Item -ItemType Directory -Force -Path $WorkDir)).Path
+New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+$WorkDir = (Resolve-Path $WorkDir).Path
 
 $sevenZip = Resolve-7z $WorkDir
 if (-not $sevenZip) { throw "7z not found." }
@@ -164,8 +203,16 @@ $extractedDir = Join-Path $WorkDir "extracted"
 $electronDir  = Join-Path $WorkDir "electron"
 $appDir       = Join-Path $WorkDir "app"
 $nativeDir    = Join-Path $WorkDir "native-builds"
-$userDataDir  = Join-Path $WorkDir "userdata"
-$cacheDir     = Join-Path $WorkDir "cache"
+$profileSuffix = Get-ProfileSuffix $env:CODEX_HOME
+if ($profileSuffix) {
+  $userDataDir = Join-Path $WorkDir "userdata-$profileSuffix"
+  $cacheDir = Join-Path $WorkDir "cache-$profileSuffix"
+} else {
+  $userDataDir = Join-Path $WorkDir "userdata"
+  $cacheDir = Join-Path $WorkDir "cache"
+}
+Write-Host "Using profile data dir: $userDataDir" -ForegroundColor DarkGray
+Write-Host "Using profile cache dir: $cacheDir" -ForegroundColor DarkGray
 
 if (-not $Reuse) {
   Write-Header "Extracting DMG"
@@ -206,7 +253,7 @@ if (-not $Reuse) {
 }
 
 Write-Header "Patching preload"
-Patch-Preload $appDir
+Update-Preload $appDir
 
 Write-Header "Reading app metadata"
 $pkgPath = Join-Path $appDir "package.json"
@@ -222,7 +269,9 @@ Write-Header "Preparing native modules"
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "win32-arm64" } else { "win32-x64" }
 $bsDst = Join-Path $appDir "node_modules\better-sqlite3\build\Release\better_sqlite3.node"
 $ptyDstPre = Join-Path $appDir "node_modules\node-pty\prebuilds\$arch"
-$skipNative = $NoLaunch -and $Reuse -and (Test-Path $bsDst) -and (Test-Path (Join-Path $ptyDstPre "pty.node"))
+$appHasNative = (Test-Path $bsDst) -and (Test-Path (Join-Path $ptyDstPre "pty.node"))
+$electronExe = Join-Path $nativeDir "node_modules\electron\dist\electron.exe"
+$skipNative = $Reuse -and $appHasNative
 if ($skipNative) {
   Write-Host "Native modules already present in app. Skipping rebuild." -ForegroundColor Cyan
 } else {
@@ -316,6 +365,12 @@ if (-not $NoLaunch) {
     throw "codex.exe not found."
   }
 
+  if (-not (Test-Path $electronExe)) {
+    throw "Electron not found at: $electronExe"
+  }
+
+  Write-Host "Using electron.exe: $electronExe" -ForegroundColor Green
+  Write-Host "Using codex CLI: $cli" -ForegroundColor Green
   Write-Header "Launching Codex"
   $rendererUrl = (New-Object System.Uri (Join-Path $appDir "webview\index.html")).AbsoluteUri
   Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
@@ -329,10 +384,10 @@ if (-not $NoLaunch) {
   $env:NODE_ENV = "production"
   $env:CODEX_CLI_PATH = $cli
   $env:PWD = $appDir
-  Ensure-GitOnPath
+  Add-GitToPath
 
   New-Item -ItemType Directory -Force -Path $userDataDir | Out-Null
   New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
-  Start-Process -FilePath $electronExe -ArgumentList "$appDir","--enable-logging","--user-data-dir=`"$userDataDir`"","--disk-cache-dir=`"$cacheDir`"" -NoNewWindow -Wait
+  Start-Process -FilePath $electronExe -ArgumentList "$appDir","--enable-logging","--user-data-dir=`"$userDataDir`"","--disk-cache-dir=`"$cacheDir`""
 }
