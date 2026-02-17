@@ -228,6 +228,32 @@ function Update-Preload([string]$AppDir) {
   }
 }
 
+function Update-MainBootstrapPath([string]$AppDir) {
+  $buildDir = Join-Path $AppDir ".vite\build"
+  if (-not (Test-Path $buildDir)) { return }
+
+  $mainBundle = Get-ChildItem -Path $buildDir -Filter "main-*.js" -File -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+  if (-not $mainBundle) { return }
+
+  $raw = Get-Content -Raw $mainBundle.FullName
+  $old = 'Object.assign(process.env,t)'
+  $oldPatched = 'if(t){const n=t.PATH??t.Path,r=process.env.PATH??process.env.Path;if(typeof n=="string"&&n.length>0&&typeof r=="string"&&r.length>0&&!n.toLowerCase().includes("system32")){t.PATH=`${r};${n}`,t.Path=t.PATH}}Object.assign(process.env,t)'
+  $newMarker = 'CODEX_BASE_PATH'
+  if ($raw -notlike "*$old*" -and $raw -notlike "*$oldPatched*" -and $raw -notlike "*$newMarker*") { return }
+
+  # Deterministic safeguard:
+  # - Never import PATH/Path from shell-env snapshots.
+  # - Always restore PATH from launcher-provided CODEX_BASE_PATH.
+  $pHeWholePattern = 'function Phe\(\)\{try\{.*?\}catch\(t\)\{.*?\}\}Phe\(\);'
+  $pHeWholeReplacement = @'
+function Phe(){try{const t=yK({interactive:!0,extraEnv:{[DK]:"1"}});if(t){delete t.PATH;delete t.Path;Object.assign(process.env,t)}const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}}catch(t){const e=t instanceof Error?t.message:String(t);fn().warning("Failed to load shell env",{safe:{},sensitive:{message:e}})}}Phe();
+'@
+  $raw = [regex]::Replace($raw, $pHeWholePattern, $pHeWholeReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+  Set-Content -NoNewline -Path $mainBundle.FullName -Value $raw
+}
+
 
 function Add-GitToPath() {
   $candidates = @(
@@ -251,7 +277,42 @@ function Add-DirToPath([string]$Dir) {
   $env:PATH = "$Dir;$env:PATH"
 }
 
+function Repair-ProcessPath() {
+  # Node/Electron on Windows can behave badly if both Path and PATH exist with different values.
+  # Build one canonical merged path and write it to both names for the current process.
+  $procVars = [Environment]::GetEnvironmentVariables("Process")
+  $pathValues = @()
+  foreach ($k in $procVars.Keys) {
+    if ($k -and ($k.ToString() -ieq "Path")) {
+      $v = $procVars[$k]
+      if ($v) { $pathValues += $v.ToString() }
+    }
+  }
+
+  if (-not $pathValues -or $pathValues.Count -eq 0) {
+    if ($env:PATH) { $pathValues = @($env:PATH) }
+  }
+
+  $merged = @()
+  foreach ($segment in $pathValues) {
+    $merged += ($segment -split ';' | Where-Object { $_ -and $_.Trim() })
+  }
+
+  $deduped = @()
+  foreach ($entry in $merged) {
+    if ($deduped -contains $entry) { continue }
+    $deduped += $entry
+  }
+
+  $canonical = ($deduped -join ';')
+  [Environment]::SetEnvironmentVariable("Path", $canonical, "Process")
+  [Environment]::SetEnvironmentVariable("PATH", $canonical, "Process")
+  $env:Path = $canonical
+  $env:PATH = $canonical
+}
+
 function Repair-BasePath() {
+  Repair-ProcessPath
   $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $merged = @()
@@ -264,7 +325,11 @@ function Repair-BasePath() {
     if ($deduped -contains $entry) { continue }
     $deduped += $entry
   }
-  $env:PATH = ($deduped -join ';')
+  $canonical = ($deduped -join ';')
+  [Environment]::SetEnvironmentVariable("Path", $canonical, "Process")
+  [Environment]::SetEnvironmentVariable("PATH", $canonical, "Process")
+  $env:Path = $canonical
+  $env:PATH = $canonical
 }
 
 function Add-CommonToolPaths() {
@@ -299,9 +364,88 @@ function Add-CommonToolPaths() {
   }
 }
 
+function Set-FeatureFlagInConfig([System.Collections.Generic.List[string]]$Lines, [string]$Key, [string]$Value) {
+  $inFeatures = $false
+  $featuresStart = -1
+  $featuresEnd = -1
+  $keyIndex = -1
+
+  for ($i = 0; $i -lt $Lines.Count; $i++) {
+    $line = $Lines[$i]
+    if ($line -match '^\s*\[(.+)\]\s*$') {
+      $sectionName = $Matches[1].Trim()
+      if ($sectionName -ieq "features") {
+        $inFeatures = $true
+        $featuresStart = $i
+        continue
+      }
+      if ($inFeatures -and $featuresEnd -lt 0) {
+        $featuresEnd = $i
+      }
+      $inFeatures = $false
+      continue
+    }
+
+    if ($inFeatures -and $line -match "^\s*$Key\s*=") {
+      $keyIndex = $i
+    }
+  }
+
+  if ($inFeatures -and $featuresEnd -lt 0) {
+    $featuresEnd = $Lines.Count
+  }
+
+  $newLine = "$Key = $Value"
+  if ($keyIndex -ge 0) {
+    $Lines[$keyIndex] = $newLine
+    return
+  }
+
+  if ($featuresStart -ge 0) {
+    $insertIndex = $featuresEnd
+    if ($insertIndex -lt 0) { $insertIndex = $Lines.Count }
+    $Lines.Insert($insertIndex, $newLine)
+    return
+  }
+
+  if ($Lines.Count -gt 0 -and $Lines[$Lines.Count - 1].Trim() -ne "") {
+    $Lines.Add("")
+  }
+  $Lines.Add("[features]")
+  $Lines.Add($newLine)
+}
+
+function Update-ProfileConfigHardening() {
+  if (-not $env:CODEX_HOME) { return }
+  $configPath = Join-Path $env:CODEX_HOME "config.toml"
+  if (-not (Test-Path $configPath)) { return }
+
+  try {
+    $raw = Get-Content -Raw $configPath
+    $lineArray = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($raw -split "`r?`n")) {
+      $lineArray.Add($line)
+    }
+
+    Set-FeatureFlagInConfig $lineArray "experimental_windows_sandbox" "false"
+    Set-FeatureFlagInConfig $lineArray "elevated_windows_sandbox" "false"
+    Set-FeatureFlagInConfig $lineArray "shell_snapshot" "false"
+
+    $updated = ($lineArray -join [Environment]::NewLine)
+    if ($updated -ne $raw) {
+      Set-Content -Path $configPath -Value $updated
+      Write-Host "Hardened profile config: $configPath" -ForegroundColor DarkGray
+    }
+  }
+  catch {
+    Write-Host ("Warning: failed to harden profile config at {0}: {1}" -f $configPath, $_.Exception.Message) -ForegroundColor Yellow
+  }
+}
+
 Set-CoreShellEnvironment
 Add-CommonToolPaths
 Add-GitToPath
+Update-ProfileConfigHardening
 
 Test-Command node
 Test-Command npm
@@ -391,6 +535,8 @@ if (-not $Reuse) {
 
 Write-Header "Patching preload"
 Update-Preload $appDir
+Write-Header "Patching main bootstrap"
+Update-MainBootstrapPath $appDir
 
 Write-Header "Reading app metadata"
 $pkgPath = Join-Path $appDir "package.json"
@@ -525,6 +671,7 @@ if (-not $NoLaunch) {
   $env:BUILD_FLAVOR = $buildFlavor
   $env:NODE_ENV = "production"
   $env:CODEX_CLI_PATH = $cli
+  $env:CODEX_BASE_PATH = $env:PATH
   $env:PWD = $appDir
   Set-CoreShellEnvironment
   Add-CommonToolPaths

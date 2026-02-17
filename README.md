@@ -65,6 +65,62 @@ The runner now normalizes and augments PATH before launching Electron by:
 
 This is specifically to prevent PATH regressions between shell sessions and launcher upgrades.
 
+## PATH/MCP hardening (persistent fix)
+Root cause observed:
+- On startup, Codex's shell environment import could overwrite `PATH` with temporary `arg0`/Codex-only entries.
+- That removed `System32` and common tool locations, causing failures like:
+  - `'where.exe' is not recognized`
+  - MCP stdio servers or tool discovery failing in-app.
+
+What this repo now does to prevent recurrence:
+- Normalizes and repairs process `Path`/`PATH` before launch.
+- Auto-injects common Windows tool paths (`System32`, Node, Git, etc.).
+- Patches the unpacked app bootstrap (`main-*.js`) so startup shell-env import cannot clobber `PATH`.
+  - `PATH/Path` from shell-env is ignored.
+  - Launcher baseline `CODEX_BASE_PATH` is restored into `process.env.PATH`.
+- Re-applies this patch on each launch/rebuild, so DMG/version updates stay protected.
+- Auto-hardens the active profile `config.toml` at launch by setting:
+  - `experimental_windows_sandbox = false`
+  - `elevated_windows_sandbox = false`
+  - `shell_snapshot = false`
+
+Profile consistency:
+- `run.cmd` selects profile via `%USERPROFILE%\.codex` (Personal) or `%USERPROFILE%\.codex-work` (Work).
+- The hardening runs for whichever profile is selected, so both are covered.
+
+Recommended post-update check:
+1. `run.cmd -CleanRebuild`
+2. In Codex terminal, run:
+   - `where.exe where`
+   - `where.exe node`
+   - `where.exe npm`
+   - `where.exe git`
+
+### Rebuild guarantee
+- Yes, rebuilds should keep working.
+- `scripts/run.ps1` reapplies PATH hardening and bootstrap patching each run.
+- If a future Codex build changes bootstrap structure significantly, update `Update-MainBootstrapPath` in `scripts/run.ps1` to match the new startup block.
+
+## Troubleshooting
+Run this inside the Codex app terminal to quickly verify PATH/tool visibility:
+
+```bat
+echo %PATH%
+where.exe where
+where.exe node
+where.exe npm
+where.exe git
+```
+
+Expected:
+- `where.exe where` resolves to `C:\Windows\System32\where.exe`
+- `where.exe node` / `npm` / `git` return one or more valid paths
+
+If checks fail:
+1. Fully close Codex (all windows/processes).
+2. Run `run.cmd -CleanRebuild`.
+3. Re-run the health check commands above.
+
 ## Notes
 - This is not an official OpenAI project.
 - Do not redistribute OpenAI app binaries or DMG files.
