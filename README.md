@@ -101,6 +101,31 @@ Recommended post-update check:
 - `scripts/run.ps1` reapplies PATH hardening and bootstrap patching each run.
 - If a future Codex build changes bootstrap structure significantly, update `Update-MainBootstrapPath` in `scripts/run.ps1` to match the new startup block.
 
+## Local thread/history persistence (Windows workspace roots)
+Observed root cause:
+- The desktop sidebar uses exact `cwd` matching in `thread/list`.
+- On Windows, many local thread rows are stored in canonical long-path form (`\\?\D:\...`), while workspace roots can be saved as unprefixed paths (`D:\...`).
+- When those formats differ, local workspace threads appear empty even though they still exist in the DB; cloud threads can still appear.
+
+What this repo now enforces on every launch (including `-Reuse` and rebuilds):
+- `scripts/run.ps1` (`Restore-ThreadTitles`) normalizes workspace roots to canonical Windows form in both:
+  - top-level global state
+  - `electron-persisted-atom-state`
+- It normalizes `threads.cwd` values in `state_*.sqlite` to canonical form so exact `cwd` filters continue to match.
+- It reapplies known-good sidebar defaults (`recent`, `threads`, `workspace=all`, `updated_at`, `stage=all`) to prevent narrowed views.
+- It regenerates `thread-titles` from the DB for both top-level and nested global state.
+
+Why this survives future rebuilds:
+- The normalization and state repair run at launch time from `scripts/run.ps1`, not as a one-off manual patch.
+- `run.cmd` invokes this logic for the active profile (`%USERPROFILE%\.codex` or `%USERPROFILE%\.codex-work`) each time it starts Codex.
+- A fresh DMG extract therefore still gets the same repair/hardening behavior automatically.
+
+Recovery if local threads ever disappear again:
+1. Close all Codex windows/processes.
+2. Run `run.cmd -Reuse` for a fast relaunch with state normalization.
+3. If needed, run `run.cmd -CleanRebuild` to refresh extracted app files too.
+4. Optional deep repair for both profiles: `python .\repair_local_threads.py`
+
 ## Troubleshooting
 Run this inside the Codex app terminal to quickly verify PATH/tool visibility:
 

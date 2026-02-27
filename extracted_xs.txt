@@ -1,0 +1,3 @@
+--- MATCH AT 1533672 ---
+Re=A.createContext(!1);function dRe(){return Gk().isLoading}function tTt(t,e){return t.checkGate(e)}function Xs(t){return pRe(),QR.useGateValue(t)}function Gk(){return pRe(),QR.useStatsigClient()}function nTt(){return Gk().client}function hRe(t,e,n){return t.getExperiment(e,n)}function Hne(t,e){const n=re.c(4),r=Gk();let i;return n[0]!==r||n[1]!==t||n[2]!==e?(i=r.getLayer(t,e),n[0]=r,n[1]=t,n[2]=e,n[3]=i):i=n[3],i}function rTt(t){const e={};return Object.entries(t).forEach(([n,r])=>{(typeof r=="number"||typeof r=="string"||typeof r=="boolean")&&(e[n]=String(r))}),e}function iTt(t){const e=t.ge
+

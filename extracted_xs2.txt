@@ -1,0 +1,105 @@
+--- MATCH AT 1533681 ---
+tsigUser})})(U5)),U5}var QR=eTt();const uRe=A.createContext(!1);function dRe(){return Gk().isLoading}function tTt(t,e){return t.checkGate(e)}function Xs(t){return pRe(),QR.useGateValue(t)}function Gk(){return pRe(),QR.useStatsigClient()}function nTt(){return Gk().client}function hRe(t,e,n){return t.
+
+--- MATCH AT 1534843 ---
+tion pRe(){A.useContext(uRe)}function X3(){const t=re.c(1);let e;return t[0]===Symbol.for("react.memo_cache_sentinel")?(e="1221508807",t[0]=e):e=t[0],Xs(e)}function Iy(){const t=re.c(2),e=ss();let n;return t[0]!==e?(n=r=>{const i=`/local/${r}`;R6?Bt.dispatchMessage("navigate-in-new-editor-tab",{path
+
+--- MATCH AT 1762854 ---
+]=I):I=e[6];const O=I,P=!S&&p!=null,D=!w&&h,j=!S&&p==null;let N;e[7]===Symbol.for("react.memo_cache_sentinel")?(N="4166894088",e[7]=N):N=e[7];const U=Xs(N);let G;e[8]===Symbol.for("react.memo_cache_sentinel")?(G="98625937",e[8]=G):G=e[8];const H=Xs(G),F=MD(),B=Ia("/remote/:taskId");let W;e[9]!==F||e
+
+--- MATCH AT 1762950 ---
+che_sentinel")?(N="4166894088",e[7]=N):N=e[7];const U=Xs(N);let G;e[8]===Symbol.for("react.memo_cache_sentinel")?(G="98625937",e[8]=G):G=e[8];const H=Xs(G),F=MD(),B=Ia("/remote/:taskId");let W;e[9]!==F||e[10]!==B?(W=F??(B?.params.taskId!=null?B.params.taskId:null),e[9]=F,e[10]=B,e[11]=W):W=e[11];con
+
+--- MATCH AT 1780327 ---
+0]!==e?(n=e===void 0?[]:e,t[0]=e,t[1]=n):n=t[1];const r=n;let i;t[2]===Symbol.for("react.memo_cache_sentinel")?(i="2357796820",t[2]=i):i=t[2];const s=Xs(i);let o;return t[3]!==r||t[4]!==s?(o=s&&r.some(iOt),t[3]=r,t[4]=s,t[5]=o):o=t[5],o}function iOt(t){return t.name==="apps"&&t.enabled}function Fy()
+
+--- MATCH AT 1886324 ---
+13];const{data:M,isLoading:T,error:R,refetch:I}=Gte(k);let O;t[14]===Symbol.for("react.memo_cache_sentinel")?(O="1907601843",t[14]=O):O=t[14];const P=Xs(O);let D;t[15]!==h||t[16]!==c||t[17]!==I||t[18]!==C?(D=async()=>{await Promise.all([c(),h&&C(),I()])},t[15]=h,t[16]=c,t[17]=I,t[18]=C,t[19]=D):D=t[
+
+--- MATCH AT 1946361 ---
+ength>0,dt=!xe&&Ie.length===0&&he.length===0&&!pt;let bt;t[25]===Symbol.for("react.memo_cache_sentinel")?(bt="3075919032",t[25]=bt):bt=t[25];const gt=Xs(bt),ct=vf(),Lt=Lzt({items:le,itemsForVisibilityLookup:[...ie,...le],showRecent:xe,hasGitRpc:ct,workspaceTaskFilter:N,currentConversationId:S,isBack
+
+--- MATCH AT 4131848 ---
+(t){const e=re.c(6),{conversationId:n,enableComments:r}=t;let i;e[0]===Symbol.for("react.memo_cache_sentinel")?(i="4285490330",e[0]=i):i=e[0];const s=Xs(i),o=r??s,{comments:a,modelComments:l,setComments:c}=Ugn(n);let u;return e[1]!==a||e[2]!==l||e[3]!==o||e[4]!==c?(u={commentProps:{enableComments:o,
+
+--- MATCH AT 4971556 ---
+oserMode:e,conversationId:n,allowWorktree:r=!1,disabled:i=!1,worktreeLabelOnly:s=!1,modeAdjacentControl:o,secondaryControls:a}){const l=ft(),c=T1(),u=Xs("505458"),{access:d,refetch:h}=die(),{activeMode:p}=Ju(n),m=cr(),g=p?.settings.model??null,{data:v}=Mn("active-workspace-roots",{select:ct=>ct.root
+
+--- MATCH AT 4972542 ---
+,X]=$r(lie),[ae,ie]=A.useState(""),le=A.useDeferredValue(ae),{data:ue,refetch:he}=ZN({enabled:I}),{data:ge,isLoading:Ce,error:Ee}=Gte({enabled:I}),Me=Xs("1907601843")&&(ge?.length??0)===0,Ae=Q?.id,Ie=Q||Me?f.jsx(K,{..._l.runInCloud}):f.jsx(K,{id:"composer.mode.remote.selectEnvironment",defaultMessag
+
+--- MATCH AT 5165685 ---
+),e[5]=i,e[6]=s):s=e[6],s}function Bvn(){const t=re.c(80);let e;t[0]===Symbol.for("react.memo_cache_sentinel")?(e="1609556872",t[0]=e):e=t[0];const n=Xs(e),r=c5(),i=lm(r,Hvn),s=ft(),o=A.useRef(null),[a,l]=A.useState(null),[c,u]=A.useState(null),d=Xi(h1e),h=m1(DGe);let p;t[1]!==c||t[2]!==d?(p=c?d.fin
+
+--- MATCH AT 5177582 ---
+w],e[0]=w,e[1]=O,e[2]=P):(O=e[1],P=e[2]),A.useEffect(O,P);let D;e[3]===Symbol.for("react.memo_cache_sentinel")?(D="4100906017",e[3]=D):D=e[3];const j=Xs(D),N=cr(),U=j&&N==="electron"&&C.authMethod==="chatgpt"&&!!navigator?.mediaDevices?.getUserMedia&&typeof MediaRecorder<"u";let G,H;e[4]!==S?(G=je=>
+
+--- MATCH AT 5235160 ---
+ebe)return fq;ebe=1;var t=PNe(),e=NNe(),n=e(function(r,i,s){t(r,s,i)});return fq=n,fq}var Pbn=Ibn();const Nbn=A1(Pbn);function Dbn(t){const e=ma(t),n=Xs("351460523"),{data:r,setData:i,isLoading:s}=Zs(As.QUEUED_FOLLOW_UPS),o=Hr(),a=hi("get-global-state",{key:As.QUEUED_FOLLOW_UPS}),l=A.useRef({}),c=A.
+
+--- MATCH AT 5281484 ---
+fault_personality";function uKe(){const t=re.c(40),e=Pi();let n;t[0]===Symbol.for("react.memo_cache_sentinel")?(n="1444479692",t[0]=n):n=t[0];const r=Xs(n),i=nTt(),s=Hr(),o=m1(Ygt),{data:a,isLoading:l}=$re(),c=a?.config?.[bq];let u;t[1]!==c?(u=Yz(c),t[1]=c,t[2]=u):u=t[2];const d=u,h=a?.config?.[yq];
+
+--- MATCH AT 5309693 ---
+}=t,i=n?.type==="local"?n.localConversationId:null,s=ma(i);let o;e[0]===Symbol.for("react.memo_cache_sentinel")?(o="351460523",e[0]=o):o=e[0];const a=Xs(o);if(!(i!=null?s.getStreamRole(i)?.role==="follower":!1)||cb()||a){let d;return e[1]!==r?(d=f.jsx(f.Fragment,{children:r}),e[1]=r,e[2]=d):d=e[2],d
+
+--- MATCH AT 5311549 ---
+lan":ae=X.turnId;break}const ie=X!=null&&M!=null,le=G3(M),ue=X3(),he=M!=null&&h0.getSessionForConversation(M)!=null,ge=C8n(le,he),Ce=ue?n8n(le):[],Ee=Xs("1823130936"),xe=Xi(Pke),Me=m1(Nke),Ae=ft(),{isPersonalityEnabled:Ie}=uKe(),Be=ss(),Ne=c1().state,Le=zD(),Pe=pi(),De=T1(),ke=Xs("1907601843"),je=sx
+
+--- MATCH AT 5311677 ---
+),Ce=ue?n8n(le):[],Ee=Xs("1823130936"),xe=Xi(Pke),Me=m1(Nke),Ae=ft(),{isPersonalityEnabled:Ie}=uKe(),Be=ss(),Ne=c1().state,Le=zD(),Pe=pi(),De=T1(),ke=Xs("1907601843"),je=sxn(M,"image"),qe=Ae.formatMessage({id:"composer.imageInputsUnsupported",defaultMessage:"This model does not support image inputs.
+
+--- MATCH AT 5464865 ---
+wd:r,codexWorktree:i}=t,s=n===void 0?null:n,o=ft(),a=pi();let l;e[0]===Symbol.for("react.memo_cache_sentinel")?(l="1115442235",e[0]=l):l=e[0];const c=Xs(l),u=ma(s),d=G3(s);let h;e[1]!==d?(h=Nd(d),e[1]=d,e[2]=h):h=e[2];const p=h,[m,g]=A.useState(!1),[v,b]=A.useState(!1),[y,x]=A.useState(!1),[w,C]=A.u
+
+--- MATCH AT 5479247 ---
+nction E1e(t){const e=re.c(6),{conversationId:n}=t,r=cr();let i;e[0]===Symbol.for("react.memo_cache_sentinel")?(i="1060282072",e[0]=i):i=e[0];const s=Xs(i);let o;e[1]===Symbol.for("react.memo_cache_sentinel")?(o="351460523",e[1]=o):o=e[1];const a=Xs(o),l=s||a;let c;return e[2]!==n||e[3]!==l||e[4]!==
+
+--- MATCH AT 5479344 ---
+he_sentinel")?(i="1060282072",e[0]=i):i=e[0];const s=Xs(i);let o;e[1]===Symbol.for("react.memo_cache_sentinel")?(o="351460523",e[1]=o):o=e[1];const a=Xs(o),l=s||a;let c;return e[2]!==n||e[3]!==l||e[4]!==r?(c=()=>{r==="electron"&&l&&n&&Bt.dispatchMessage("open-thread-overlay",{conversationId:n})},e[2
+
+--- MATCH AT 5803356 ---
+, monospace',P1e=8,N1e=24;function w_n(){const t=re.c(12);let e;t[0]===Symbol.for("react.memo_cache_sentinel")?(e="2106641128",t[0]=e):e=t[0];const n=Xs(e);let r;t[1]===Symbol.for("react.memo_cache_sentinel")?(r=f.jsx(A1e,{slug:"general-settings"}),t[1]=r):r=t[1];let i;t[2]===Symbol.for("react.memo_
+
+--- MATCH AT 6204950 ---
+>{Qe(Zi)},e[22]=Qe,e[23]=nt):nt=e[23];const at=nt;let st;e[24]===Symbol.for("react.memo_cache_sentinel")?(st="2882842607",e[24]=st):st=e[24];const ht=Xs(st),pt=M==="local"&&!!s;let dt;e[25]!==pt?(dt={enabled:pt},e[25]=pt,e[26]=dt):dt=e[26];const{data:bt}=pMn(s,dt),gt=M==="local"&&!!s;let ct;e[27]!==
+
+--- MATCH AT 6230000 ---
+elOpen:b,setRightPanelOpen:y,showInlineComposer:x}=r1e(m);let w;t[6]===Symbol.for("react.memo_cache_sentinel")?(w="1060282072",t[6]=w):w=t[6];const C=Xs(w);let S;t[7]===Symbol.for("react.memo_cache_sentinel")?(S="351460523",t[7]=S):S=t[7];const k=Xs(S),M=C||k;let T;t[8]===Symbol.for("react.memo_cach
+
+--- MATCH AT 6230097 ---
+he_sentinel")?(w="1060282072",t[6]=w):w=t[6];const C=Xs(w);let S;t[7]===Symbol.for("react.memo_cache_sentinel")?(S="351460523",t[7]=S):S=t[7];const k=Xs(S),M=C||k;let T;t[8]===Symbol.for("react.memo_cache_sentinel")?(T={conversationId:null},t[8]=T):T=t[8];const R=E1e(T),I=ft(),[O,P]=A.useState("clos
+
+--- MATCH AT 6409296 ---
+pYe(t){const e=re.c(9),{name:n,attributes:r,children:i}=t;let s;e[0]===Symbol.for("react.memo_cache_sentinel")?(s="2761175068",e[0]=s):s=e[0];const o=Xs(s),[a]=A.useState(o);if(!a){let u;return e[1]!==i?(u=f.jsx(f.Fragment,{children:i}),e[1]=i,e[2]=u):u=e[2],u}let l;e[3]!==r?(l=(u,d,h,p,m,g)=>{if(ty
+
+--- MATCH AT 6587645 ---
+iffPanelOpen:l,onToggleReviewPanel:c,trailing:u}=t,d=ft();let h;e[0]===Symbol.for("react.memo_cache_sentinel")?(h="1060282072",e[0]=h):h=e[0];const p=Xs(h);let m;e[1]===Symbol.for("react.memo_cache_sentinel")?(m="351460523",e[1]=m):m=e[1];const g=Xs(m),v=p||g;let b,y;e[2]!==s?(b=s?s:null,y=lae(b),e[
+
+--- MATCH AT 6587742 ---
+he_sentinel")?(h="1060282072",e[0]=h):h=e[0];const p=Xs(h);let m;e[1]===Symbol.for("react.memo_cache_sentinel")?(m="351460523",e[1]=m):m=e[1];const g=Xs(m),v=p||g;let b,y;e[2]!==s?(b=s?s:null,y=lae(b),e[2]=s,e[3]=b,e[4]=y):(b=e[3],y=e[4]);const x=y,w=_s("open-file");let C;e[5]!==b||e[6]!==w?(C=()=>{
+
+--- MATCH AT 6646987 ---
+current==null&&(typeof window>"u"||"AudioContext"in window&&(T.current=new window.AudioContext,T.current.state==="suspended"&&T.current.resume()))},O=Xs("1846562237"),P=async()=>{if(d){c?.abort(),u(null);return}o({eventName:"codex_onboarding_login_method_selected",metadata:{method:"chatgpt"}});const
+
+--- MATCH AT 6742919 ---
+electron",{authMethod:r,isLoading:i}=bo(),s=r==="chatgpt";let o;t[0]===Symbol.for("react.memo_cache_sentinel")?(o="3227700559",t[0]=o):o=t[0];const a=Xs(o),l=dRe(),c=n&&s;let u;t[1]!==c?(u={queryConfig:{enabled:c,staleTime:Fr.ONE_MINUTE}},t[1]=c,t[2]=u):u=t[2];const{data:d,isLoading:h}=Mn("account-i
+
+--- MATCH AT 6743420 ---
+nction AOn(t){const e=re.c(19),n=t===void 0?null:t,r=cr();let i;e[0]===Symbol.for("react.memo_cache_sentinel")?(i="4114442250",e[0]=i):i=e[0];const s=Xs(i),{isUsageSettingsVisible:o,isUsageSettingsAccessLoading:a}=MOn();let l,c;if(e[1]!==o||e[2]!==n||e[3]!==s||e[4]!==r){let y;e[7]!==o||e[8]!==s||e[9
+
+--- MATCH AT 6746736 ---
+,{replace:!0})}function IOn(t){const e=re.c(4),{slug:n}=t;let r;e[0]===Symbol.for("react.memo_cache_sentinel")?(r="4114442250",e[0]=r):r=e[0];const i=Xs(r);if(n==="remote-connections"&&!i){let a;return e[1]===Symbol.for("react.memo_cache_sentinel")?(a=f.jsx(Uc,{to:"/settings/general-settings",replac
+
+--- MATCH AT 6793372 ---
+,e[0]=t,e[1]=n):n=e[1];const{onConnectStarted:r}=n,i=cr();let s;e[2]===Symbol.for("react.memo_cache_sentinel")?(s="2761268526",e[2]=s):s=e[2];const o=Xs(s),a=Hr(),[l,c]=A.useState(null),u=wjn;let d;e[3]!==o||e[4]!==r||e[5]!==a||e[6]!==i?(d=async v=>{if(r?.(v),!o&&v.installUrl?.trim()){u(v.installUrl
+
+--- MATCH AT 6877544 ---
+,i}function OFn(t){const e=re.c(5),{children:n}=t,r=dRe();let i;e[0]===Symbol.for("react.memo_cache_sentinel")?(i="2929582856",e[0]=i):i=e[0];const s=Xs(i);if(r){let o;return e[1]===Symbol.for("react.memo_cache_sentinel")?(o=f.jsx(um,{}),e[1]=o):o=e[1],o}else if(s){let o;return e[2]===Symbol.for("re
+
+--- MATCH AT 6999811 ---
+[3]),A.useEffect(r,i),null}function Jzn(){const t=re.c(7);let e;t[0]===Symbol.for("react.memo_cache_sentinel")?(e="1060282072",t[0]=e):e=t[0];const n=Xs(e);let r;t[1]===Symbol.for("react.memo_cache_sentinel")?(r="351460523",t[1]=r):r=t[1];const i=Xs(r),s=Pi();let o,a;return t[2]!==s||t[3]!==n||t[4]!
+
+--- MATCH AT 6999908 ---
+he_sentinel")?(e="1060282072",t[0]=e):e=t[0];const n=Xs(e);let r;t[1]===Symbol.for("react.memo_cache_sentinel")?(r="351460523",t[1]=r):r=t[1];const i=Xs(r),s=Pi();let o,a;return t[2]!==s||t[3]!==n||t[4]!==i?(o=()=>{s.setMultiwindowControlEnabled(i),s.setThreadOverlayEnabled(n||i)},a=[n,i,s],t[2]=s,t
+

@@ -254,6 +254,29 @@ function Phe(){try{const t=yK({interactive:!0,extraEnv:{[DK]:"1"}});if(t){delete
   Set-Content -NoNewline -Path $mainBundle.FullName -Value $raw
 }
 
+function Update-WebviewWeeklyResetFormat([string]$AppDir) {
+  $assetsDir = Join-Path $AppDir "webview\assets"
+  if (-not (Test-Path $assetsDir)) { return }
+
+  $bundle = Get-ChildItem -Path $assetsDir -Filter "index-*.js" -File -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+  if (-not $bundle) { return }
+
+  $raw = Get-Content -Raw $bundle.FullName
+  $old = 'new Intl.DateTimeFormat(void 0,{month:"short",day:"numeric"}).format(n)'
+  $new = 'new Intl.DateTimeFormat(void 0,{month:"short",day:"numeric",hour:"numeric",minute:"numeric"}).format(n)'
+
+  if ($raw -like "*$new*") { return }
+  if ($raw -notlike "*$old*") {
+    Write-Host "Warning: weekly reset format patch point not found in $($bundle.Name)" -ForegroundColor Yellow
+    return
+  }
+
+  $raw = $raw.Replace($old, $new)
+  Set-Content -NoNewline -Path $bundle.FullName -Value $raw
+}
+
 
 function Add-GitToPath() {
   $candidates = @(
@@ -447,9 +470,34 @@ Add-CommonToolPaths
 Add-GitToPath
 Update-ProfileConfigHardening
 
+function Update-CodexCli() {
+  Write-Host "Checking @openai/codex CLI version..." -ForegroundColor DarkGray
+  try {
+    Write-Host "Ensuring @openai/codex CLI is up-to-date..." -ForegroundColor DarkGray
+    $out = (& npm list -g @openai/codex --depth=0) -join "`n"
+    $currentVer = if ($out -match '@openai/codex@([0-9\.]+)') { $matches[1] } else { $null }
+    
+    if (-not $currentVer) {
+      Write-Host "Installing @openai/codex CLI globally..." -ForegroundColor Cyan
+      & npm install -g @openai/codex@latest | Out-Null
+    }
+    else {
+      $remoteVer = (& npm show @openai/codex version).Trim()
+      if ($remoteVer -and $currentVer -ne $remoteVer) {
+        Write-Host "Updating @openai/codex CLI from $currentVer to $remoteVer..." -ForegroundColor Yellow
+        & npm install -g @openai/codex@latest | Out-Null
+      }
+    }
+  }
+  catch {
+    Write-Host "Warning: Failed to check/update @openai/codex CLI: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
+
 Test-Command node
 Test-Command npm
 Test-Command npx
+Update-CodexCli
 
 foreach ($k in @("npm_config_runtime", "npm_config_target", "npm_config_disturl", "npm_config_arch", "npm_config_build_from_source")) {
   if (Test-Path "Env:$k") { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
@@ -533,10 +581,184 @@ if (-not $Reuse) {
   }
 }
 
+function Update-SunsetPatch([string]$AppDir) {
+  $assetsDir = Join-Path $AppDir "webview\assets"
+  if (-not (Test-Path $assetsDir)) { return }
+
+  $bundle = Get-ChildItem -Path $assetsDir -Filter "index-*.js" -File -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+  if (-not $bundle) { return }
+
+  $raw = Get-Content -Raw $bundle.FullName
+  $pattern = '([a-zA-Z_$]+)="2929582856",([a-zA-Z_$]+)\[(\d+)\]=\1\):\1=\2\[\3\];const ([a-zA-Z_$]+)=Xs\(\1\);?'
+  
+  if ($raw -notmatch $pattern) {
+    if ($raw -match '="2929582856"') {
+      Write-Host "Warning: Sunset ID found but regex did not match in $($bundle.Name). Pattern may need updating." -ForegroundColor Yellow
+    }
+    return
+  }
+
+  $replacement = '${1}="2929582856",${2}[${3}]=${1}):${1}=${2}[${3}];const ${4}=!1;'
+  $patched = [regex]::Replace($raw, $pattern, $replacement)
+
+  if ($patched -ne $raw) {
+    Set-Content -NoNewline -Path $bundle.FullName -Value $patched
+  }
+}
+
+function Restore-ThreadTitles([string]$AppDir) {
+  # Find the Codex state database and global-state JSON
+  $codexHome = $env:CODEX_HOME
+  if (-not $codexHome) { $codexHome = Join-Path $env:USERPROFILE ".codex-work" }
+
+  $globalStateFile = Join-Path $codexHome ".codex-global-state.json"
+  if (-not (Test-Path $globalStateFile)) {
+    Write-Host "No global state file found; skipping thread title restoration." -ForegroundColor Yellow
+    return
+  }
+
+  # Find the state database
+  $dbPath = $null
+  for ($i = 10; $i -ge 0; $i--) {
+    $candidate = Join-Path $codexHome "state_$i.sqlite"
+    if (Test-Path $candidate) { $dbPath = $candidate; break }
+  }
+
+  # Use Python to sync thread titles and enforce sidebar filter defaults.
+  $pyScript = @"
+import sqlite3, json, sys, os
+db = sys.argv[1] if len(sys.argv) > 1 else ""
+global_state_file = sys.argv[2]
+
+def normalize_windows_root(value):
+    if not isinstance(value, str):
+        return value
+    v = value.strip()
+    if not v:
+        return v
+    v = v.replace("/", "\\")
+    if v.startswith("\\\\?\\UNC\\"):
+        return v
+    if v.startswith("\\\\?\\") and len(v) >= 7 and v[4].isalpha() and v[5] == ":" and v[6] == "\\":
+        return "\\\\?\\" + v[4].upper() + v[5:]
+    if len(v) >= 3 and v[0].isalpha() and v[1] == ":" and v[2] == "\\":
+        return "\\\\?\\" + v[0].upper() + v[1:]
+    return v
+
+def normalize_root_list(values):
+    if not isinstance(values, list):
+        return values
+    out = []
+    seen = set()
+    for item in values:
+        n = normalize_windows_root(item)
+        key = n.lower() if isinstance(n, str) else str(n)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out
+
+def normalize_root_labels(labels):
+    if not isinstance(labels, dict):
+        return labels
+    out = {}
+    for k, v in labels.items():
+        out[normalize_windows_root(k)] = v
+    return out
+
+def normalize_title(value):
+    t = (value or "").strip().replace("\n", " ").replace("\r", " ")
+    if len(t) > 80:
+        t = t[:77].rstrip() + "..."
+    return t if t else "Previous Chat"
+
+with open(global_state_file, "r", encoding="utf-8") as f:
+    state = json.load(f)
+if not isinstance(state, dict):
+    state = {}
+
+nested = state.get("electron-persisted-atom-state")
+if not isinstance(nested, dict):
+    nested = {}
+
+# Force known-good defaults to avoid cloud-only/narrowed sidebar views.
+for target in (state, nested):
+    target["recent-tasks-filter"] = "recent"
+    target["sidebar-view-v2"] = "threads"
+    target["sidebar-workspace-filter-v2"] = "all"
+    target["thread-sort-key"] = "updated_at"
+    target["stage-filter"] = "all"
+
+# Keep workspace root filters in canonical form expected by thread/list exact cwd matching.
+for target in (state, nested):
+    target["electron-saved-workspace-roots"] = normalize_root_list(target.get("electron-saved-workspace-roots") or [])
+    target["active-workspace-roots"] = normalize_root_list(target.get("active-workspace-roots") or [])
+    target["electron-workspace-root-labels"] = normalize_root_labels(target.get("electron-workspace-root-labels") or {})
+
+thread_count = 0
+if db and os.path.exists(db):
+    conn = sqlite3.connect(db)
+    cur = conn.cursor()
+    # Ensure historical thread cwd values use one canonical format.
+    cur.execute("SELECT id, cwd FROM threads WHERE cwd IS NOT NULL")
+    for tid, cwd in cur.fetchall():
+        n = normalize_windows_root(cwd)
+        if n != cwd:
+            cur.execute("UPDATE threads SET cwd = ? WHERE id = ?", (n, tid))
+    conn.commit()
+    cur.execute("SELECT id, COALESCE(NULLIF(TRIM(title),''), NULLIF(TRIM(first_user_message),''), 'Previous Chat') FROM threads ORDER BY updated_at DESC")
+    rows = cur.fetchall()
+    conn.close()
+    if rows:
+        order = []
+        titles = {}
+        for tid, ttitle in rows:
+            order.append(tid)
+            titles[tid] = normalize_title(ttitle)
+        payload = {"titles": titles, "order": order}
+        state["thread-titles"] = payload
+        nested["thread-titles"] = payload
+        thread_count = len(order)
+
+state["electron-persisted-atom-state"] = nested
+with open(global_state_file, "w", encoding="utf-8") as f:
+    json.dump(state, f, ensure_ascii=False)
+print(thread_count)
+"@
+
+  $tempPy = Join-Path $env:TEMP "codex_restore_titles.py"
+  Set-Content -Path $tempPy -Value $pyScript -Encoding UTF8
+
+  try {
+    $threadCount = & python $tempPy $dbPath $globalStateFile 2>$null
+  }
+  catch {
+    Write-Host "Warning: Failed to read thread titles from database: $($_.Exception.Message)" -ForegroundColor Yellow
+    return
+  }
+
+  if (-not $threadCount -or $threadCount.Trim().Length -eq 0) {
+    Write-Host "Updated global state defaults (no thread titles changed)." -ForegroundColor DarkGray
+  }
+  else {
+    Write-Host "Restored $($threadCount.Trim()) thread titles into global state." -ForegroundColor Green
+  }
+}
+
 Write-Header "Patching preload"
 Update-Preload $appDir
 Write-Header "Patching main bootstrap"
 Update-MainBootstrapPath $appDir
+Write-Header "Patching weekly reset display"
+Update-WebviewWeeklyResetFormat $appDir
+Write-Header "Patching sunset block"
+Update-SunsetPatch $appDir
+
+Write-Header "Restoring thread titles"
+Restore-ThreadTitles $appDir
 
 Write-Header "Reading app metadata"
 $pkgPath = Join-Path $appDir "package.json"
