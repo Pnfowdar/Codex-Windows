@@ -306,6 +306,9 @@ function Update-MainBootstrapPath([string]$AppDir) {
   $old = 'Object.assign(process.env,t)'
   $oldPatched = 'if(t){delete t.PATH;delete t.Path;}Object.assign(process.env,t);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}'
   $newMarker = 'CODEX_BASE_PATH'
+  $cwdPattern = 'resolveRequestedCwd\(([A-Za-z0-9_$]+)\)\{if\(\1\)return \1;const ([A-Za-z0-9_$]+)=Un\(this\.globalState\);return \2\[0\]\?\2\[0\]:process\.cwd\(\)\}'
+  $cwdReplacement = 'resolveRequestedCwd($1){const __strip=t=>typeof t=="string"&&t.startsWith("\\\\?\\")?t.slice(4):t;if($1)return __strip($1);const $2=Un(this.globalState);return $2[0]?__strip($2[0]):process.cwd()}'
+  $cwdMarker = 'startsWith("\\\\?\\")?t.slice(4):t'
 
   # Deterministic safeguard:
   # - Never import PATH/Path from shell-env snapshots.
@@ -315,33 +318,56 @@ function Update-MainBootstrapPath([string]$AppDir) {
   $updatedAny = $false
   foreach ($mainBundle in $mainBundles) {
     $raw = Get-Content -Raw $mainBundle.FullName
-    if ($raw -like "*$newMarker*") {
+    $patched = $raw
+    $pathOk = $patched -like "*$newMarker*"
+    $cwdOk = $patched -like "*$cwdMarker*"
+
+    if (-not $pathOk) {
+      if ($patched -notlike "*$old*" -and $patched -notlike "*$oldPatched*") {
+        Write-Host "Warning: PATH hardening anchor not found in $($mainBundle.Name)." -ForegroundColor Yellow
+      }
+      elseif (-not ([regex]::IsMatch($patched, $assignPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
+        Write-Host "Warning: main bootstrap assign pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
+      }
+      else {
+        $patchedAfterPath = [regex]::Replace($patched, $assignPattern, $assignReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($patchedAfterPath -eq $patched) {
+          Write-Host "Warning: main bootstrap PATH patch made no changes in $($mainBundle.Name)." -ForegroundColor Yellow
+        }
+        else {
+          $patched = $patchedAfterPath
+          $pathOk = $patched -like "*$newMarker*"
+        }
+      }
+    }
+
+    if (-not $cwdOk) {
+      if (-not ([regex]::IsMatch($patched, $cwdPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
+        Write-Host "Warning: terminal CWD normalization pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
+      }
+      else {
+        $patchedAfterCwd = [regex]::Replace($patched, $cwdPattern, $cwdReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($patchedAfterCwd -eq $patched) {
+          Write-Host "Warning: terminal CWD normalization patch made no changes in $($mainBundle.Name)." -ForegroundColor Yellow
+        }
+        else {
+          $patched = $patchedAfterCwd
+          $cwdOk = $patched -like "*$cwdMarker*"
+        }
+      }
+    }
+
+    if ($patched -ne $raw) {
+      Set-Content -NoNewline -Path $mainBundle.FullName -Value $patched
+    }
+
+    if ($pathOk -and $cwdOk) {
       $updatedAny = $true
-      continue
     }
-
-    if ($raw -notlike "*$old*" -and $raw -notlike "*$oldPatched*") {
-      Write-Host "Warning: PATH hardening anchor not found in $($mainBundle.Name)." -ForegroundColor Yellow
-      continue
-    }
-
-    if (-not ([regex]::IsMatch($raw, $assignPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
-      Write-Host "Warning: main bootstrap assign pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
-      continue
-    }
-
-    $patched = [regex]::Replace($raw, $assignPattern, $assignReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-    if ($patched -eq $raw) {
-      Write-Host "Warning: main bootstrap patch made no changes in $($mainBundle.Name)." -ForegroundColor Yellow
-      continue
-    }
-
-    Set-Content -NoNewline -Path $mainBundle.FullName -Value $patched
-    $updatedAny = $true
   }
 
   if (-not $updatedAny) {
-    Write-Host "Warning: failed to apply main bootstrap PATH hardening in $buildDir." -ForegroundColor Yellow
+    Write-Host "Warning: failed to apply main bootstrap PATH/CWD hardening in $buildDir." -ForegroundColor Yellow
   }
 }
 
