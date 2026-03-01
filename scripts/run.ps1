@@ -272,28 +272,77 @@ function Update-Preload([string]$AppDir) {
 
 function Update-MainBootstrapPath([string]$AppDir) {
   $buildDir = Join-Path $AppDir ".vite\build"
-  if (-not (Test-Path $buildDir)) { return }
+  if (-not (Test-Path $buildDir)) {
+    Write-Host "Warning: main bootstrap build directory not found: $buildDir" -ForegroundColor Yellow
+    return
+  }
 
-  $mainBundle = Get-ChildItem -Path $buildDir -Filter "main-*.js" -File -ErrorAction SilentlyContinue |
-  Sort-Object LastWriteTime -Descending |
-  Select-Object -First 1
-  if (-not $mainBundle) { return }
+  $mainBundles = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
+  $mainJs = Join-Path $buildDir "main.js"
+  if (Test-Path $mainJs) {
+    $mainBundles.Add((Get-Item $mainJs))
+  }
 
-  $raw = Get-Content -Raw $mainBundle.FullName
+  $hashedBundles = Get-ChildItem -Path $buildDir -Filter "main-*.js" -File -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending
+  foreach ($bundle in $hashedBundles) {
+    $alreadyAdded = $false
+    foreach ($existing in $mainBundles) {
+      if ($existing.FullName -ieq $bundle.FullName) {
+        $alreadyAdded = $true
+        break
+      }
+    }
+    if (-not $alreadyAdded) {
+      $mainBundles.Add($bundle)
+    }
+  }
+
+  if ($mainBundles.Count -eq 0) {
+    Write-Host "Warning: no main bootstrap bundle found in $buildDir (main.js or main-*.js)." -ForegroundColor Yellow
+    return
+  }
+
   $old = 'Object.assign(process.env,t)'
-  $oldPatched = 'if(t){const n=t.PATH??t.Path,r=process.env.PATH??process.env.Path;if(typeof n=="string"&&n.length>0&&typeof r=="string"&&r.length>0&&!n.toLowerCase().includes("system32")){t.PATH=`${r};${n}`,t.Path=t.PATH}}Object.assign(process.env,t)'
+  $oldPatched = 'if(t){delete t.PATH;delete t.Path;}Object.assign(process.env,t);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}'
   $newMarker = 'CODEX_BASE_PATH'
-  if ($raw -notlike "*$old*" -and $raw -notlike "*$oldPatched*" -and $raw -notlike "*$newMarker*") { return }
 
   # Deterministic safeguard:
   # - Never import PATH/Path from shell-env snapshots.
   # - Always restore PATH from launcher-provided CODEX_BASE_PATH.
-  $pHeWholePattern = 'function Phe\(\)\{try\{.*?\}catch\(t\)\{.*?\}\}Phe\(\);'
-  $pHeWholeReplacement = @'
-function Phe(){try{const t=yK({interactive:!0,extraEnv:{[DK]:"1"}});if(t){delete t.PATH;delete t.Path;Object.assign(process.env,t)}const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}}catch(t){const e=t instanceof Error?t.message:String(t);fn().warning("Failed to load shell env",{safe:{},sensitive:{message:e}})}}Phe();
-'@
-  $raw = [regex]::Replace($raw, $pHeWholePattern, $pHeWholeReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-  Set-Content -NoNewline -Path $mainBundle.FullName -Value $raw
+  $assignPattern = '(const t=[A-Za-z0-9_$]+\(\{interactive:[^;]*\}\);)Object\.assign\(process\.env,t\)'
+  $assignReplacement = '$1if(t){delete t.PATH;delete t.Path;}Object.assign(process.env,t);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}'
+  $updatedAny = $false
+  foreach ($mainBundle in $mainBundles) {
+    $raw = Get-Content -Raw $mainBundle.FullName
+    if ($raw -like "*$newMarker*") {
+      $updatedAny = $true
+      continue
+    }
+
+    if ($raw -notlike "*$old*" -and $raw -notlike "*$oldPatched*") {
+      Write-Host "Warning: PATH hardening anchor not found in $($mainBundle.Name)." -ForegroundColor Yellow
+      continue
+    }
+
+    if (-not ([regex]::IsMatch($raw, $assignPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
+      Write-Host "Warning: main bootstrap assign pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
+      continue
+    }
+
+    $patched = [regex]::Replace($raw, $assignPattern, $assignReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    if ($patched -eq $raw) {
+      Write-Host "Warning: main bootstrap patch made no changes in $($mainBundle.Name)." -ForegroundColor Yellow
+      continue
+    }
+
+    Set-Content -NoNewline -Path $mainBundle.FullName -Value $patched
+    $updatedAny = $true
+  }
+
+  if (-not $updatedAny) {
+    Write-Host "Warning: failed to apply main bootstrap PATH hardening in $buildDir." -ForegroundColor Yellow
+  }
 }
 
 function Update-WebviewWeeklyResetFormat([string]$AppDir) {
@@ -482,14 +531,23 @@ function Set-FeatureFlagInConfig([System.Collections.Generic.List[string]]$Lines
 
 function Update-ProfileConfigHardening() {
   if (-not $env:CODEX_HOME) { return }
+  $codexHome = $env:CODEX_HOME
+  if (-not (Test-Path $codexHome)) {
+    New-Item -ItemType Directory -Force -Path $codexHome | Out-Null
+  }
+
   $configPath = Join-Path $env:CODEX_HOME "config.toml"
-  if (-not (Test-Path $configPath)) { return }
+  if (-not (Test-Path $configPath)) {
+    New-Item -ItemType File -Force -Path $configPath | Out-Null
+  }
 
   try {
     $raw = Get-Content -Raw $configPath
     $lineArray = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in ($raw -split "`r?`n")) {
-      $lineArray.Add($line)
+    if ($raw.Length -gt 0) {
+      foreach ($line in ($raw -split "`r?`n")) {
+        $lineArray.Add($line)
+      }
     }
 
     Set-FeatureFlagInConfig $lineArray "experimental_windows_sandbox" "false"

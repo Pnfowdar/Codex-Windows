@@ -27,6 +27,13 @@ if errorlevel 2 (
 ) else (
   set "CODEX_HOME=%USERPROFILE%\.codex"
 )
+if not exist "%CODEX_HOME%" (
+  mkdir "%CODEX_HOME%" >nul 2>&1
+  if errorlevel 1 (
+    echo Failed to create CODEX_HOME directory: %CODEX_HOME%
+    exit /b 1
+  )
+)
 echo Using CODEX_HOME=%CODEX_HOME%
 echo.
 
