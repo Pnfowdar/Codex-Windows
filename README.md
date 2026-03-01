@@ -75,18 +75,43 @@ Root cause observed:
 What this repo now does to prevent recurrence:
 - Normalizes and repairs process `Path`/`PATH` before launch.
 - Auto-injects common Windows tool paths (`System32`, Node, Git, etc.).
-- Patches the unpacked app bootstrap (`main-*.js`) so startup shell-env import cannot clobber `PATH`.
+- Patches the unpacked app bootstrap (`main.js` or `main-*.js`) so startup shell-env import cannot clobber `PATH`.
   - `PATH/Path` from shell-env is ignored.
   - Launcher baseline `CODEX_BASE_PATH` is restored into `process.env.PATH`.
+- Patches terminal cwd resolution in bootstrap so shell sessions strip Windows long-path prefix (`\\?\`) for display.
+  - This fixes prompts like `PS Microsoft.PowerShell.Core\FileSystem::\\?\D:\...>` back to `PS D:\...>`.
+  - This is terminal-session-only normalization and does not relax thread/sidebar canonicalization.
 - Re-applies this patch on each launch/rebuild, so DMG/version updates stay protected.
 - Auto-hardens the active profile `config.toml` at launch by setting:
   - `experimental_windows_sandbox = false`
   - `elevated_windows_sandbox = false`
   - `shell_snapshot = false`
+- Ensures profile scaffolding exists before hardening:
+  - creates `%CODEX_HOME%` if missing
+  - creates `%CODEX_HOME%\config.toml` if missing
 
 Profile consistency:
 - `run.cmd` selects profile via `%USERPROFILE%\.codex` (Personal) or `%USERPROFILE%\.codex-work` (Work).
 - The hardening runs for whichever profile is selected, so both are covered.
+
+## MCP startup hardening (profile-local)
+Observed root cause:
+- In truncated PATH sessions, MCP servers launched via bare `npx` (or `npx.cmd` that internally expects `node` on PATH) can fail to initialize.
+
+What is now configured:
+- Profile-local wrappers are used for npx-backed MCP servers:
+  - `%USERPROFILE%\.codex\bin\npx-mcp.cmd`
+  - `%USERPROFILE%\.codex-work\bin\npx-mcp.cmd`
+- Wrapper behavior:
+  - prepends `C:\Program Files\nodejs`, `C:\Windows\System32`, `C:\Windows` to PATH
+  - executes `C:\Program Files\nodejs\npx.cmd %*`
+- Both profile `config.toml` files were updated so npx-backed MCP servers use these wrappers.
+- Enabled `supabase-mcp-server` and `chrome-devtools` use `startup_timeout_sec = 90`.
+
+Validation quick checks:
+1. `C:\Users\pnfow\.codex\bin\npx-mcp.cmd -y @modelcontextprotocol/server-sequential-thinking --help`
+2. `C:\Users\pnfow\.codex-work\bin\npx-mcp.cmd -y @modelcontextprotocol/server-sequential-thinking --help`
+Expected output includes: `Sequential Thinking MCP Server running on stdio`
 
 Recommended post-update check:
 1. `run.cmd -CleanRebuild`
@@ -99,6 +124,8 @@ Recommended post-update check:
 ### Rebuild guarantee
 - Yes, rebuilds should keep working.
 - `scripts/run.ps1` reapplies PATH hardening and bootstrap patching each run.
+- `run.cmd -CleanRebuild` clears `work\` artifacts only; profile state under `%USERPROFILE%\.codex*` persists.
+- MCP wrapper scripts and profile `config.toml` entries are profile-local, so they survive clean rebuilds.
 - If a future Codex build changes bootstrap structure significantly, update `Update-MainBootstrapPath` in `scripts/run.ps1` to match the new startup block.
 
 ## Local thread/history persistence (Windows workspace roots)
