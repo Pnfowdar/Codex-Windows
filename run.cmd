@@ -1,11 +1,27 @@
 @echo off
 setlocal
 
+set "SYSROOT=%SystemRoot%"
+if not defined SYSROOT set "SYSROOT=%WINDIR%"
+if not defined SYSROOT set "SYSROOT=C:\Windows"
+set "CHOICE_EXE=%SYSROOT%\System32\choice.exe"
+set "POWERSHELL_EXE=%SYSROOT%\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+if not exist "%CHOICE_EXE%" (
+  echo Missing required executable: %CHOICE_EXE%
+  exit /b 1
+)
+if not exist "%POWERSHELL_EXE%" (
+  echo Missing required executable: %POWERSHELL_EXE%
+  exit /b 1
+)
+
 echo.
 echo Select Codex profile:
 echo   1^) Personal  ^(%USERPROFILE%\.codex^)
 echo   2^) Work      ^(%USERPROFILE%\.codex-work^)
-choice /C 12 /N /M "Enter choice [1/2]: "
+%CHOICE_EXE% /C 12 /N /M "Enter choice [1/2]: "
+if errorlevel 255 exit /b %errorlevel%
 if errorlevel 2 (
   set "CODEX_HOME=%USERPROFILE%\.codex-work"
 ) else (
@@ -43,6 +59,12 @@ if /I "%~1"=="--clean-rebuild" (
   shift
 )
 
+set "HAS_REUSE_ARG="
+for %%A in (%*) do (
+  if /I "%%~A"=="-Reuse" set "HAS_REUSE_ARG=1"
+  if /I "%%~A"=="--reuse" set "HAS_REUSE_ARG=1"
+)
+
 if defined CLEAN_REBUILD (
   echo Performing clean rebuild of extracted artifacts...
   if exist "%WORKDIR%\extracted" rmdir /s /q "%WORKDIR%\extracted"
@@ -52,9 +74,13 @@ if defined CLEAN_REBUILD (
 )
 
 if defined FORCE_REBUILD (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" %*
+  "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" %*
 ) else if exist "%WORKDIR%\app" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" -Reuse %*
+  if defined HAS_REUSE_ARG (
+    "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" %*
+  ) else (
+    "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" -Reuse %*
+  )
 ) else (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" %*
+  "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -WorkDir "%WORKDIR%" %*
 )

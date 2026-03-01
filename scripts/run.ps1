@@ -16,6 +16,48 @@ function Test-Command([string]$Name) {
   }
 }
 
+function Resolve-PythonExe() {
+  $py = Get-Command python -ErrorAction SilentlyContinue
+  if ($py -and $py.Path -and (Test-Path $py.Path)) {
+    return $py.Path
+  }
+
+  $candidates = [System.Collections.Generic.List[string]]::new()
+  $candidates.Add((Join-Path $env:USERPROFILE ".pyenv\pyenv-win\shims\python.exe"))
+  $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Python\Python313\python.exe"))
+  $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"))
+  $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe"))
+
+  $pyenvVersionsDir = Join-Path $env:USERPROFILE ".pyenv\pyenv-win\versions"
+  if (Test-Path $pyenvVersionsDir) {
+    $versionExeCandidates = Get-ChildItem -Path $pyenvVersionsDir -Directory -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending |
+    ForEach-Object { Join-Path $_.FullName "python.exe" }
+    foreach ($candidate in $versionExeCandidates) {
+      $candidates.Add($candidate)
+    }
+  }
+
+  $whereExe = Join-Path $env:WINDIR "System32\where.exe"
+  if (Test-Path $whereExe) {
+    try {
+      $matches = & $whereExe python.exe 2>$null
+      foreach ($match in @($matches)) {
+        if ($match) { $candidates.Add($match.Trim()) }
+      }
+    }
+    catch {}
+  }
+
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path $candidate)) {
+      return $candidate
+    }
+  }
+
+  return $null
+}
+
 function Set-CoreShellEnvironment() {
   if (-not $env:SystemRoot) {
     $env:SystemRoot = $env:WINDIR
@@ -609,13 +651,35 @@ function Update-SunsetPatch([string]$AppDir) {
 }
 
 function Restore-ThreadTitles([string]$AppDir) {
-  # Find the Codex state database and global-state JSON
-  $codexHome = $env:CODEX_HOME
-  if (-not $codexHome) { $codexHome = Join-Path $env:USERPROFILE ".codex-work" }
+  # Find the Codex state database and global-state JSON.
+  # Prefer CODEX_HOME, then fall back to common Windows profile roots.
+  $profileCandidates = [System.Collections.Generic.List[string]]::new()
+  if ($env:CODEX_HOME) { $profileCandidates.Add($env:CODEX_HOME) }
+  $profileCandidates.Add((Join-Path $env:USERPROFILE ".codex-work"))
+  $profileCandidates.Add((Join-Path $env:USERPROFILE ".codex"))
 
-  $globalStateFile = Join-Path $codexHome ".codex-global-state.json"
-  if (-not (Test-Path $globalStateFile)) {
-    Write-Host "No global state file found; skipping thread title restoration." -ForegroundColor Yellow
+  $dedupedCandidates = [System.Collections.Generic.List[string]]::new()
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($candidate in $profileCandidates) {
+    if (-not $candidate) { continue }
+    if ($seen.Add($candidate)) { $dedupedCandidates.Add($candidate) }
+  }
+
+  $codexHome = $null
+  foreach ($candidate in $dedupedCandidates) {
+    $candidateState = Join-Path $candidate ".codex-global-state.json"
+    if (Test-Path $candidateState) {
+      $codexHome = $candidate
+      break
+    }
+  }
+  if (-not $codexHome -and $dedupedCandidates.Count -gt 0) {
+    $codexHome = $dedupedCandidates[0]
+  }
+
+  $globalStateFile = if ($codexHome) { Join-Path $codexHome ".codex-global-state.json" } else { $null }
+  if (-not $globalStateFile -or -not (Test-Path $globalStateFile)) {
+    Write-Host "No global state file found in known profiles; skipping thread title restoration." -ForegroundColor Yellow
     return
   }
 
@@ -639,6 +703,7 @@ def normalize_windows_root(value):
     if not v:
         return v
     v = v.replace("/", "\\")
+    # Normalize to canonical Windows long-path form used by thread/list exact cwd matching.
     if v.startswith("\\\\?\\UNC\\"):
         return v
     if v.startswith("\\\\?\\") and len(v) >= 7 and v[4].isalpha() and v[5] == ":" and v[6] == "\\":
@@ -692,7 +757,7 @@ for target in (state, nested):
     target["thread-sort-key"] = "updated_at"
     target["stage-filter"] = "all"
 
-# Keep workspace root filters in canonical form expected by thread/list exact cwd matching.
+# Keep workspace root filters in canonical Windows form for exact cwd matching.
 for target in (state, nested):
     target["electron-saved-workspace-roots"] = normalize_root_list(target.get("electron-saved-workspace-roots") or [])
     target["active-workspace-roots"] = normalize_root_list(target.get("active-workspace-roots") or [])
@@ -702,7 +767,7 @@ thread_count = 0
 if db and os.path.exists(db):
     conn = sqlite3.connect(db)
     cur = conn.cursor()
-    # Ensure historical thread cwd values use one canonical format.
+    # Ensure historical thread cwd values use canonical Windows form.
     cur.execute("SELECT id, cwd FROM threads WHERE cwd IS NOT NULL")
     for tid, cwd in cur.fetchall():
         n = normalize_windows_root(cwd)
@@ -732,8 +797,14 @@ print(thread_count)
   $tempPy = Join-Path $env:TEMP "codex_restore_titles.py"
   Set-Content -Path $tempPy -Value $pyScript -Encoding UTF8
 
+  $pythonExe = Resolve-PythonExe
+  if (-not $pythonExe) {
+    Write-Host "Warning: Python executable not found; skipping thread title restoration." -ForegroundColor Yellow
+    return
+  }
+
   try {
-    $threadCount = & python $tempPy $dbPath $globalStateFile 2>$null
+    $threadCount = & $pythonExe $tempPy $dbPath $globalStateFile 2>$null
   }
   catch {
     Write-Host "Warning: Failed to read thread titles from database: $($_.Exception.Message)" -ForegroundColor Yellow

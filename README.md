@@ -115,6 +115,13 @@ What this repo now enforces on every launch (including `-Reuse` and rebuilds):
 - It reapplies known-good sidebar defaults (`recent`, `threads`, `workspace=all`, `updated_at`, `stage=all`) to prevent narrowed views.
 - It regenerates `thread-titles` from the DB for both top-level and nested global state.
 
+Regression note (March 1, 2026):
+- A temporary change normalized paths to unprefixed form (`D:\...`), which can reintroduce local-thread invisibility when DB rows remain canonical (`\\?\D:\...`).
+- `scripts/run.ps1` has been corrected to normalize to canonical long-path form (`\\?\D:\...`) again.
+- Guardrail test added: `test_thread_restore_paths.py` (verifies both `repair_local_threads.py` and the embedded `run.ps1` normalizer).
+- Validation command:
+  - `C:\Users\pnfow\.pyenv\pyenv-win\versions\3.13.7\python.exe -m unittest -v test_thread_restore_paths.py`
+
 Why this survives future rebuilds:
 - The normalization and state repair run at launch time from `scripts/run.ps1`, not as a one-off manual patch.
 - `run.cmd` invokes this logic for the active profile (`%USERPROFILE%\.codex` or `%USERPROFILE%\.codex-work`) each time it starts Codex.
@@ -125,6 +132,8 @@ Recovery if local threads ever disappear again:
 2. Run `run.cmd -Reuse` for a fast relaunch with state normalization.
 3. If needed, run `run.cmd -CleanRebuild` to refresh extracted app files too.
 4. Optional deep repair for both profiles: `python .\repair_local_threads.py`
+5. Verify the path-normalization guardrail tests:
+   - `C:\Users\pnfow\.pyenv\pyenv-win\versions\3.13.7\python.exe -m unittest -v test_thread_restore_paths.py`
 
 ## Troubleshooting
 Run this inside the Codex app terminal to quickly verify PATH/tool visibility:
