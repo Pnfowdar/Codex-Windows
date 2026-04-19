@@ -3,6 +3,7 @@ param(
   [string]$WorkDir = (Join-Path $PSScriptRoot "..\work"),
   [string]$CodexCliPath,
   [switch]$Reuse,
+  [switch]$RefreshDmg,
   [switch]$NoLaunch,
   [switch]$EnableLogging
 )
@@ -245,6 +246,10 @@ function Write-Header([string]$Text) {
   Write-Host "`n=== $Text ===" -ForegroundColor Cyan
 }
 
+function Get-LatestDmgUrl() {
+  return "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+}
+
 function Get-ProfileSuffix([string]$CodexHome) {
   if (-not $CodexHome) { return $null }
   $leaf = Split-Path -Path $CodexHome -Leaf
@@ -254,6 +259,40 @@ function Get-ProfileSuffix([string]$CodexHome) {
   $suffix = $suffix.Trim('-')
   if (-not $suffix) { return $null }
   return $suffix
+}
+
+function Get-LauncherProfileLabel([string]$ProfileSuffix) {
+  switch ($ProfileSuffix) {
+    "codex" { return "Personal" }
+    "codex-work" { return "Work" }
+  }
+
+  if (-not $ProfileSuffix) {
+    return "Launcher"
+  }
+
+  $normalized = ($ProfileSuffix -replace '[-_]+', ' ').Trim()
+  if (-not $normalized) {
+    return "Launcher"
+  }
+
+  $textInfo = [System.Globalization.CultureInfo]::InvariantCulture.TextInfo
+  return $textInfo.ToTitleCase($normalized)
+}
+
+function Get-LauncherAppIdentity([string]$ProfileSuffix) {
+  $label = Get-LauncherProfileLabel $ProfileSuffix
+  $idSuffix = if ($ProfileSuffix) { $ProfileSuffix } else { "default" }
+  $idSuffix = $idSuffix.ToLowerInvariant() -replace '[^a-z0-9._-]', '-'
+  $idSuffix = $idSuffix.Trim('-')
+  if (-not $idSuffix) {
+    $idSuffix = "default"
+  }
+
+  return @{
+    Name = "Codex $label"
+    AppId = "com.openai.codex.launcher.$idSuffix"
+  }
 }
 
 function Get-WindowsFileId([string]$Path) {
@@ -453,13 +492,55 @@ function Update-Preload([string]$AppDir) {
   $preload = Join-Path $AppDir ".vite\build\preload.js"
   if (-not (Test-Path $preload)) { return }
   $raw = Get-Content -Raw $preload
-  $processExpose = 'const P={env:process.env,platform:process.platform,versions:process.versions,arch:process.arch,cwd:()=>process.env.PWD,argv:process.argv,pid:process.pid};n.contextBridge.exposeInMainWorld("process",P);'
-  if ($raw -notlike "*$processExpose*") {
-    $re = 'n\.contextBridge\.exposeInMainWorld\("codexWindowType",[A-Za-z0-9_$]+\);n\.contextBridge\.exposeInMainWorld\("electronBridge",[A-Za-z0-9_$]+\);'
-    $m = [regex]::Match($raw, $re)
-    if (-not $m.Success) { throw "preload patch point not found." }
-    $raw = $raw.Replace($m.Value, "$processExpose$m")
-    Set-Content -NoNewline -Path $preload -Value $raw
+  if ($raw -match 'contextBridge\.exposeInMainWorld\([`'']process[`''],') {
+    return
+  }
+
+  $processExpose = 'const P={env:process.env,platform:process.platform,versions:process.versions,arch:process.arch,cwd:()=>process.env.PWD,argv:process.argv,pid:process.pid};'
+  $patterns = @(
+    '(?<bridge>[A-Za-z0-9_$]+)\.contextBridge\.exposeInMainWorld\(`electronBridge`,[A-Za-z0-9_$]+\);',
+    '(?<bridge>[A-Za-z0-9_$]+)\.contextBridge\.exposeInMainWorld\("electronBridge",[A-Za-z0-9_$]+\);'
+  )
+
+  foreach ($pattern in $patterns) {
+    if (-not ([regex]::IsMatch($raw, $pattern))) {
+      continue
+    }
+
+    $replacement = '$0' + $processExpose + '${bridge}.contextBridge.exposeInMainWorld(`process`,P);'
+    $patched = [regex]::Replace($raw, $pattern, $replacement, 1)
+    if ($patched -ne $raw) {
+      Set-Content -NoNewline -Path $preload -Value $patched
+      return
+    }
+  }
+
+  throw "preload patch point not found."
+}
+
+function Update-BootstrapIdentity([string]$AppDir) {
+  $bootstrap = Join-Path $AppDir ".vite\build\bootstrap.js"
+  if (-not (Test-Path $bootstrap)) {
+    Write-Host "Warning: bootstrap bundle not found: $bootstrap" -ForegroundColor Yellow
+    return
+  }
+
+  $raw = Get-Content -Raw $bootstrap
+  if ($raw -like "*CODEX_ELECTRON_APP_NAME*" -and $raw -like "*CODEX_ELECTRON_APP_ID*") {
+    return
+  }
+
+  $pattern = 'var y=process\.platform===`darwin`,b=e\.d\.resolve\(\);t\.app\.setName\(e\.Pr\(b\)\),t\.app\.setPath\(`userData`,g\(\{appDataPath:t\.app\.getPath\(`appData`\),buildFlavor:b,env:process\.env\}\)\),process\.platform===`win32`&&t\.app\.setAppUserModelId\(e\.r\(b\)\);var x=e\.n\(\{isMacOS:y,isPackaged:t\.app\.isPackaged\}\);if\(!\(!x\|\|t\.app\.requestSingleInstanceLock\(\)\)\)'
+  $replacement = 'var y=process.platform===`darwin`,b=e.d.resolve(),w=process.env.CODEX_ELECTRON_APP_NAME?.trim(),S=process.env.CODEX_ELECTRON_APP_ID?.trim();t.app.setName(w&&w.length>0?w:e.Pr(b)),t.app.setPath(`userData`,g({appDataPath:t.app.getPath(`appData`),buildFlavor:b,env:process.env})),process.platform===`win32`&&t.app.setAppUserModelId(S&&S.length>0?S:e.r(b));var x=e.n({isMacOS:y,isPackaged:t.app.isPackaged});if(!(!x||t.app.requestSingleInstanceLock()))'
+
+  if (-not ([regex]::IsMatch($raw, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
+    Write-Host "Warning: bootstrap identity patch point not found in $bootstrap" -ForegroundColor Yellow
+    return
+  }
+
+  $patched = [regex]::Replace($raw, $pattern, $replacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+  if ($patched -ne $raw) {
+    Set-Content -NoNewline -Path $bootstrap -Value $patched
   }
 }
 
@@ -496,18 +577,32 @@ function Update-MainBootstrapPath([string]$AppDir) {
     return
   }
 
-  $old = 'Object.assign(process.env,t)'
-  $oldPatched = 'if(t){delete t.PATH;delete t.Path;}Object.assign(process.env,t);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}'
   $newMarker = 'CODEX_BASE_PATH'
-  $cwdPattern = 'resolveRequestedCwd\(([A-Za-z0-9_$]+)\)\{if\(\1\)return \1;const ([A-Za-z0-9_$]+)=Un\(this\.globalState\);return \2\[0\]\?\2\[0\]:process\.cwd\(\)\}'
-  $cwdReplacement = 'resolveRequestedCwd($1){const __strip=t=>typeof t=="string"&&t.startsWith("\\\\?\\")?t.slice(4):t;if($1)return __strip($1);const $2=Un(this.globalState);return $2[0]?__strip($2[0]):process.cwd()}'
   $cwdMarker = 'startsWith("\\\\?\\")?t.slice(4):t'
 
   # Deterministic safeguard:
   # - Never import PATH/Path from shell-env snapshots.
   # - Always restore PATH from launcher-provided CODEX_BASE_PATH.
-  $assignPattern = '(const t=[A-Za-z0-9_$]+\(\{interactive:[^;]*\}\);)Object\.assign\(process\.env,t\)'
-  $assignReplacement = '$1if(t){delete t.PATH;delete t.Path;}Object.assign(process.env,t);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}'
+  $assignPatches = @(
+    @{
+      Pattern = '(const t=[A-Za-z0-9_$]+\(\{interactive:[^;]*\}\);)Object\.assign\(process\.env,t\)'
+      Replacement = '$1if(t){delete t.PATH;delete t.Path;}Object.assign(process.env,t);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH}'
+    },
+    @{
+      Pattern = 'Object\.assign\(process\.env,(?<env>[A-Za-z0-9_$]+)\.userEnv\),(?<app>[A-Za-z0-9_$]+)\.app\.isPackaged\|\|(?<clean>[A-Za-z0-9_$]+)\(process\.env\);return'
+      Replacement = 'if(${env}.userEnv){delete ${env}.userEnv.PATH;delete ${env}.userEnv.Path;}Object.assign(process.env,${env}.userEnv);const __b=process.env.CODEX_BASE_PATH??"";if(typeof __b=="string"&&__b.toLowerCase().includes("system32")){process.env.PATH=__b;process.env.Path=process.env.PATH};${app}.app.isPackaged||${clean}(process.env);return'
+    }
+  )
+  $cwdPatches = @(
+    @{
+      Pattern = 'resolveRequestedCwd\(([A-Za-z0-9_$]+)\)\{if\(\1\)return \1;const ([A-Za-z0-9_$]+)=Un\(this\.globalState\);return \2\[0\]\?\2\[0\]:process\.cwd\(\)\}'
+      Replacement = 'resolveRequestedCwd($1){const __strip=t=>typeof t=="string"&&t.startsWith("\\\\?\\")?t.slice(4):t;if($1)return __strip($1);const $2=Un(this.globalState);return $2[0]?__strip($2[0]):process.cwd()}'
+    },
+    @{
+      Pattern = 'resolveRequestedCwd\(e,t\)\{if\(e\)return e;let n=z\(this\.globalState\);if\(n\[0\]\)return n\[0\];if\(t!=null\)\{let e=this\.getHostConfigForHostId\?\.\(t\)\?\?null;if\(e\?\.home_dir!=null&&e\.home_dir\.length>0\)return e\.home_dir\}return process\.cwd\(\)\}'
+      Replacement = 'resolveRequestedCwd(e,t){const __strip=t=>typeof t=="string"&&t.startsWith("\\\\?\\")?t.slice(4):t;if(e)return __strip(e);let n=z(this.globalState);if(n[0])return __strip(n[0]);if(t!=null){let e=this.getHostConfigForHostId?.(t)??null;if(e?.home_dir!=null&&e.home_dir.length>0)return __strip(e.home_dir)}return process.cwd()}'
+    }
+  )
   $updatedAny = $false
   foreach ($mainBundle in $mainBundles) {
     $raw = Get-Content -Raw $mainBundle.FullName
@@ -516,37 +611,42 @@ function Update-MainBootstrapPath([string]$AppDir) {
     $cwdOk = $patched -like "*$cwdMarker*"
 
     if (-not $pathOk) {
-      if ($patched -notlike "*$old*" -and $patched -notlike "*$oldPatched*") {
-        Write-Host "Warning: PATH hardening anchor not found in $($mainBundle.Name)." -ForegroundColor Yellow
-      }
-      elseif (-not ([regex]::IsMatch($patched, $assignPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
-        Write-Host "Warning: main bootstrap assign pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
-      }
-      else {
-        $patchedAfterPath = [regex]::Replace($patched, $assignPattern, $assignReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        if ($patchedAfterPath -eq $patched) {
-          Write-Host "Warning: main bootstrap PATH patch made no changes in $($mainBundle.Name)." -ForegroundColor Yellow
+      $pathPatched = $false
+      foreach ($assignPatch in $assignPatches) {
+        if (-not ([regex]::IsMatch($patched, $assignPatch.Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
+          continue
         }
-        else {
+
+        $patchedAfterPath = [regex]::Replace($patched, $assignPatch.Pattern, $assignPatch.Replacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($patchedAfterPath -ne $patched) {
           $patched = $patchedAfterPath
           $pathOk = $patched -like "*$newMarker*"
+          $pathPatched = $true
+          break
         }
+      }
+      if (-not $pathPatched) {
+        Write-Host "Warning: PATH hardening anchor not found in $($mainBundle.Name)." -ForegroundColor Yellow
       }
     }
 
     if (-not $cwdOk) {
-      if (-not ([regex]::IsMatch($patched, $cwdPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
-        Write-Host "Warning: terminal CWD normalization pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
-      }
-      else {
-        $patchedAfterCwd = [regex]::Replace($patched, $cwdPattern, $cwdReplacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        if ($patchedAfterCwd -eq $patched) {
-          Write-Host "Warning: terminal CWD normalization patch made no changes in $($mainBundle.Name)." -ForegroundColor Yellow
+      $cwdPatched = $false
+      foreach ($cwdPatch in $cwdPatches) {
+        if (-not ([regex]::IsMatch($patched, $cwdPatch.Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline))) {
+          continue
         }
-        else {
+
+        $patchedAfterCwd = [regex]::Replace($patched, $cwdPatch.Pattern, $cwdPatch.Replacement, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($patchedAfterCwd -ne $patched) {
           $patched = $patchedAfterCwd
           $cwdOk = $patched -like "*$cwdMarker*"
+          $cwdPatched = $true
+          break
         }
+      }
+      if (-not $cwdPatched) {
+        Write-Host "Warning: terminal CWD normalization pattern not found in $($mainBundle.Name)." -ForegroundColor Yellow
       }
     }
 
@@ -784,6 +884,61 @@ function Update-ProfileConfigHardening() {
   }
 }
 
+function Get-LaunchStorageTag([object]$Pkg) {
+  if (-not $Pkg) {
+    return "legacy"
+  }
+
+  $tagParts = [System.Collections.Generic.List[string]]::new()
+  if ($Pkg.PSObject.Properties.Name -contains "version" -and $Pkg.version) {
+    $tagParts.Add($Pkg.version.ToString())
+  }
+  if ($Pkg.PSObject.Properties.Name -contains "codexBuildNumber" -and $Pkg.codexBuildNumber) {
+    $tagParts.Add("build$($Pkg.codexBuildNumber)")
+  }
+  if ($Pkg.PSObject.Properties.Name -contains "codexBuildFlavor" -and $Pkg.codexBuildFlavor) {
+    $tagParts.Add($Pkg.codexBuildFlavor.ToString())
+  }
+
+  if ($tagParts.Count -eq 0) {
+    return "legacy"
+  }
+
+  $rawTag = ($tagParts -join "-").ToLowerInvariant()
+  return ($rawTag -replace '[^a-z0-9._-]', '-').Trim('-')
+}
+
+function Refresh-DmgFromLatestUrl([string]$DestinationPath) {
+  if (-not $DestinationPath) {
+    throw "Destination path is required for DMG refresh."
+  }
+
+  $destinationDir = Split-Path -Path $DestinationPath -Parent
+  if ($destinationDir) {
+    New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
+  }
+
+  $tempPath = "$DestinationPath.download"
+  if (Test-Path -LiteralPath $tempPath) {
+    Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+  }
+
+  $url = Get-LatestDmgUrl
+  Write-Header "Downloading Latest DMG"
+  Write-Host "Source: $url" -ForegroundColor Cyan
+
+  try {
+    Invoke-WebRequest -Uri $url -OutFile $tempPath -UseBasicParsing
+    Move-Item -LiteralPath $tempPath -Destination $DestinationPath -Force
+  }
+  catch {
+    if (Test-Path -LiteralPath $tempPath) {
+      Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+    }
+    throw
+  }
+}
+
 function Repair-PersonalProfileState() {
   if (-not $env:CODEX_HOME) {
     return
@@ -867,18 +1022,24 @@ foreach ($k in @("npm_config_runtime", "npm_config_target", "npm_config_disturl"
 
 if (-not $DmgPath) {
   $default = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) "Codex.dmg"
+  if ($RefreshDmg) {
+    Refresh-DmgFromLatestUrl -DestinationPath $default
+  }
   if (Test-Path $default) {
     $DmgPath = $default
   }
   else {
-    $cand = Get-ChildItem -Path (Resolve-Path (Join-Path $PSScriptRoot "..")) -Filter "*.dmg" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($cand) {
-      $DmgPath = $cand.FullName
+    Refresh-DmgFromLatestUrl -DestinationPath $default
+    if (Test-Path $default) {
+      $DmgPath = $default
     }
     else {
       throw "No DMG found."
     }
   }
+}
+elseif ($RefreshDmg) {
+  Refresh-DmgFromLatestUrl -DestinationPath $DmgPath
 }
 
 $DmgPath = (Resolve-Path $DmgPath).Path
@@ -893,19 +1054,14 @@ $electronDir = Join-Path $WorkDir "electron"
 $appDir = Join-Path $WorkDir "app"
 $nativeDir = Join-Path $WorkDir "native-builds"
 $profileSuffix = Get-ProfileSuffix $env:CODEX_HOME
-if ($profileSuffix) {
-  $userDataDir = Join-Path $WorkDir "userdata-$profileSuffix"
-  $cacheDir = Join-Path $WorkDir "cache-$profileSuffix"
-}
-else {
-  $userDataDir = Join-Path $WorkDir "userdata"
-  $cacheDir = Join-Path $WorkDir "cache"
-}
-Write-Host "Using profile data dir: $userDataDir" -ForegroundColor DarkGray
-Write-Host "Using profile cache dir: $cacheDir" -ForegroundColor DarkGray
 
 if (-not $Reuse) {
   Write-Header "Extracting DMG"
+  foreach ($staleDir in @($extractedDir, $electronDir, $appDir)) {
+    if (Test-Path -LiteralPath $staleDir) {
+      Remove-Item -LiteralPath $staleDir -Recurse -Force
+    }
+  }
   New-Item -ItemType Directory -Force -Path $extractedDir | Out-Null
   & $sevenZip x -y $DmgPath -o"$extractedDir" | Out-Null
 
@@ -1141,6 +1297,8 @@ print(thread_count)
 
 Write-Header "Patching preload"
 Update-Preload $appDir
+Write-Header "Patching bootstrap identity"
+Update-BootstrapIdentity $appDir
 Write-Header "Patching main bootstrap"
 Update-MainBootstrapPath $appDir
 Write-Header "Patching weekly reset display"
@@ -1158,6 +1316,18 @@ $pkg = Get-Content -Raw $pkgPath | ConvertFrom-Json
 $electronVersion = $pkg.devDependencies.electron
 $betterVersion = $pkg.dependencies."better-sqlite3"
 $ptyVersion = $pkg.dependencies."node-pty"
+$launchStorageTag = Get-LaunchStorageTag $pkg
+if ($profileSuffix) {
+  $userDataDir = Join-Path $WorkDir "userdata-$profileSuffix-$launchStorageTag"
+  $cacheDir = Join-Path $WorkDir "cache-$profileSuffix-$launchStorageTag"
+}
+else {
+  $userDataDir = Join-Path $WorkDir "userdata-$launchStorageTag"
+  $cacheDir = Join-Path $WorkDir "cache-$launchStorageTag"
+}
+Write-Host "Using app version: $($pkg.version) (build $($pkg.codexBuildNumber), flavor $($pkg.codexBuildFlavor))" -ForegroundColor DarkGray
+Write-Host "Using profile data dir: $userDataDir" -ForegroundColor DarkGray
+Write-Host "Using profile cache dir: $cacheDir" -ForegroundColor DarkGray
 
 if (-not $electronVersion) { throw "Electron version not found." }
 
@@ -1178,26 +1348,17 @@ else {
     & npm init -y | Out-Null
   }
 
-  $bsSrcProbe = Join-Path $nativeDir "node_modules\better-sqlite3\build\Release\better_sqlite3.node"
-  $ptySrcProbe = Join-Path $nativeDir "node_modules\node-pty\prebuilds\$arch\pty.node"
+  $deps = @(
+    "better-sqlite3@$betterVersion",
+    "node-pty@$ptyVersion",
+    "@electron/rebuild",
+    "prebuild-install",
+    "electron@$electronVersion"
+  )
+  Write-Host "Refreshing native-build dependencies for Electron $electronVersion..." -ForegroundColor Cyan
+  & npm install --no-save @deps
+  if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
   $electronExe = Join-Path $nativeDir "node_modules\electron\dist\electron.exe"
-  $haveNative = (Test-Path $bsSrcProbe) -and (Test-Path $ptySrcProbe) -and (Test-Path $electronExe)
-
-  if (-not $haveNative) {
-    $deps = @(
-      "better-sqlite3@$betterVersion",
-      "node-pty@$ptyVersion",
-      "@electron/rebuild",
-      "prebuild-install",
-      "electron@$electronVersion"
-    )
-    & npm install --no-save @deps
-    if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
-    $electronExe = Join-Path $nativeDir "node_modules\electron\dist\electron.exe"
-  }
-  else {
-    Write-Host "Native modules already present. Skipping rebuild." -ForegroundColor Cyan
-  }
 
   Write-Host "Rebuilding native modules for Electron $electronVersion..." -ForegroundColor Cyan
   $rebuildOk = $false
@@ -1208,6 +1369,7 @@ else {
     $env:npm_config_msbuild_args = "/p:SpectreMitigation=false"
     & node $rebuildCli -v $electronVersion -w "better-sqlite3" | Out-Null
     $env:npm_config_msbuild_args = $null
+    if ($LASTEXITCODE -ne 0) { throw "electron-rebuild exited with code $LASTEXITCODE." }
     $rebuildOk = $true
   }
   catch {
@@ -1223,6 +1385,10 @@ else {
       $prebuildCli = Join-Path $nativeDir "node_modules\prebuild-install\bin.js"
       if (-not (Test-Path $prebuildCli)) { throw "prebuild-install not found." }
       & node $prebuildCli -r electron -t $electronVersion --tag-prefix=electron-v | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Pop-Location
+        throw "prebuild-install exited with code $LASTEXITCODE."
+      }
       Pop-Location
     }
   }
@@ -1279,13 +1445,18 @@ if (-not $NoLaunch) {
   $env:ELECTRON_FORCE_IS_PACKAGED = "1"
   $buildNumber = if ($pkg.PSObject.Properties.Name -contains "codexBuildNumber" -and $pkg.codexBuildNumber) { $pkg.codexBuildNumber } else { "510" }
   $buildFlavor = if ($pkg.PSObject.Properties.Name -contains "codexBuildFlavor" -and $pkg.codexBuildFlavor) { $pkg.codexBuildFlavor } else { "prod" }
+  $launcherIdentity = Get-LauncherAppIdentity $profileSuffix
   $env:CODEX_BUILD_NUMBER = $buildNumber
   $env:CODEX_BUILD_FLAVOR = $buildFlavor
   $env:BUILD_FLAVOR = $buildFlavor
   $env:NODE_ENV = "production"
   $env:CODEX_CLI_PATH = $cli
   $env:CODEX_BASE_PATH = $env:PATH
+  $env:CODEX_ELECTRON_USER_DATA_PATH = $userDataDir
+  $env:CODEX_ELECTRON_APP_NAME = $launcherIdentity.Name
+  $env:CODEX_ELECTRON_APP_ID = $launcherIdentity.AppId
   $env:PWD = $appDir
+  Write-Host "Using launcher app identity: $($launcherIdentity.Name) [$($launcherIdentity.AppId)]" -ForegroundColor DarkGray
   Set-CoreShellEnvironment
   Add-CommonToolPaths
   Add-GitToPath
