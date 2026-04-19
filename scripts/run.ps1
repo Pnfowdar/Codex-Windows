@@ -256,6 +256,199 @@ function Get-ProfileSuffix([string]$CodexHome) {
   return $suffix
 }
 
+function Get-WindowsFileId([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return $null
+  }
+
+  $fsutil = Join-Path $env:SystemRoot "System32\fsutil.exe"
+  if (-not (Test-Path $fsutil)) {
+    return $null
+  }
+
+  try {
+    $output = & $fsutil file queryfileid $Path 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $output) {
+      return $null
+    }
+
+    $match = [regex]::Match(($output -join "`n"), 'File ID is (\S+)')
+    if ($match.Success) {
+      return $match.Groups[1].Value.Trim()
+    }
+  }
+  catch {}
+
+  return $null
+}
+
+function Resolve-ProfileTargetPath([object]$Target) {
+  if ($null -eq $Target) {
+    return $null
+  }
+
+  if ($Target -is [System.Array]) {
+    foreach ($item in $Target) {
+      $resolved = Resolve-ProfileTargetPath $item
+      if ($resolved) { return $resolved }
+    }
+    return $null
+  }
+
+  return $Target.ToString()
+}
+
+function Copy-ProfileSeedItem([string]$SourceRoot, [string]$DestinationRoot, [string]$RelativePath) {
+  $sourcePath = Join-Path $SourceRoot $RelativePath
+  if (-not (Test-Path -LiteralPath $sourcePath)) {
+    return
+  }
+
+  $destinationPath = Join-Path $DestinationRoot $RelativePath
+  $sourceItem = Get-Item -LiteralPath $sourcePath -Force
+
+  if ($sourceItem.PSIsContainer) {
+    New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
+    Copy-Item -Path (Join-Path $sourcePath "*") -Destination $destinationPath -Recurse -Force -ErrorAction SilentlyContinue
+    return
+  }
+
+  $destinationParent = Split-Path -Path $destinationPath -Parent
+  if ($destinationParent) {
+    New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
+  }
+  Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+}
+
+function Ensure-IndependentProfileRoots() {
+  $personalRoot = Join-Path $env:USERPROFILE ".codex"
+  $workRoot = Join-Path $env:USERPROFILE ".codex-work"
+
+  if (-not (Test-Path -LiteralPath $personalRoot) -or -not (Test-Path -LiteralPath $workRoot)) {
+    return
+  }
+
+  $personalItem = Get-Item -LiteralPath $personalRoot -Force -ErrorAction SilentlyContinue
+  if (-not $personalItem) {
+    return
+  }
+
+  if (-not $personalItem.Attributes.ToString().Contains("ReparsePoint")) {
+    return
+  }
+
+  $targetPath = Resolve-ProfileTargetPath $personalItem.Target
+  if (-not $targetPath) {
+    return
+  }
+
+  $resolvedTarget = try { (Resolve-Path -LiteralPath $targetPath -ErrorAction Stop).Path } catch { $null }
+  $resolvedWork = try { (Resolve-Path -LiteralPath $workRoot -ErrorAction Stop).Path } catch { $null }
+  if (-not $resolvedTarget -or -not $resolvedWork) {
+    return
+  }
+
+  if (-not $resolvedTarget.Equals($resolvedWork, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return
+  }
+
+  Write-Host "Repairing aliased personal profile root: $personalRoot -> $resolvedTarget" -ForegroundColor Yellow
+
+  # Seed the real personal profile with shared tooling/config, but not auth/session state.
+  $seedItems = @(
+    "AGENTS.md",
+    "bin",
+    "config.toml",
+    "mcp",
+    "plugins",
+    "rules",
+    "skills",
+    "superpowers",
+    "vendor_imports"
+  )
+
+  Remove-Item -LiteralPath $personalRoot -Force
+  New-Item -ItemType Directory -Force -Path $personalRoot | Out-Null
+
+  foreach ($relativePath in $seedItems) {
+    Copy-ProfileSeedItem -SourceRoot $workRoot -DestinationRoot $personalRoot -RelativePath $relativePath
+  }
+}
+
+function Convert-ToStandaloneFile([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return $false
+  }
+
+  $tempPath = "$Path.codex-standalone.tmp"
+  if (Test-Path -LiteralPath $tempPath) {
+    Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+  }
+
+  try {
+    Copy-Item -LiteralPath $Path -Destination $tempPath -Force
+    Remove-Item -LiteralPath $Path -Force
+    Move-Item -LiteralPath $tempPath -Destination $Path -Force
+    return $true
+  }
+  catch {
+    if (Test-Path -LiteralPath $tempPath) {
+      Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+    }
+    throw
+  }
+}
+
+function Ensure-IndependentProfileArtifacts() {
+  $profileRoots = @(
+    (Join-Path $env:USERPROFILE ".codex"),
+    (Join-Path $env:USERPROFILE ".codex-work")
+  ) | Where-Object { $_ -and (Test-Path $_) }
+
+  if ($profileRoots.Count -lt 2) {
+    return
+  }
+
+  # These files carry identity/session state and must never be hardlinked across profiles.
+  $artifactNames = @(
+    "auth.json",
+    "auth.json.bak",
+    "cap_sid",
+    "installation_id"
+  )
+
+  foreach ($artifactName in $artifactNames) {
+    $paths = @()
+    foreach ($profileRoot in $profileRoots) {
+      $candidate = Join-Path $profileRoot $artifactName
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        $paths += $candidate
+      }
+    }
+
+    if ($paths.Count -lt 2) {
+      continue
+    }
+
+    $seenIds = @{}
+    foreach ($path in $paths) {
+      $fileId = Get-WindowsFileId $path
+      if (-not $fileId) {
+        continue
+      }
+
+      if ($seenIds.ContainsKey($fileId)) {
+        if (Convert-ToStandaloneFile $path) {
+          Write-Host "Separated shared profile artifact: $path" -ForegroundColor DarkGray
+        }
+      }
+      else {
+        $seenIds[$fileId] = $path
+      }
+    }
+  }
+}
+
 function Update-Preload([string]$AppDir) {
   $preload = Join-Path $AppDir ".vite\build\preload.js"
   if (-not (Test-Path $preload)) { return }
@@ -591,9 +784,52 @@ function Update-ProfileConfigHardening() {
   }
 }
 
+function Repair-PersonalProfileState() {
+  if (-not $env:CODEX_HOME) {
+    return
+  }
+
+  $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+  $repairScript = Join-Path $repoRoot "profile_repair.py"
+  if (-not (Test-Path $repairScript)) {
+    return
+  }
+
+  $pythonExe = Resolve-PythonExe
+  if (-not $pythonExe) {
+    Write-Host "Warning: Python executable not found; skipping profile state recovery." -ForegroundColor Yellow
+    return
+  }
+
+  $workRoot = Join-Path $env:USERPROFILE ".codex-work"
+  try {
+    $raw = & $pythonExe $repairScript --target-root $env:CODEX_HOME --work-root $workRoot --apply
+    if ($LASTEXITCODE -ne 0 -or -not $raw) {
+      return
+    }
+
+    $payload = ($raw -join "")
+    if (-not $payload) {
+      return
+    }
+
+    $result = $payload | ConvertFrom-Json
+    if ($result -and $result.applied) {
+      $source = if ($result.selected_source) { $result.selected_source } else { $result.source_root }
+      Write-Host ("Recovered personal profile state from {0} (+{1} threads, +{2} sessions)." -f $source, $result.threads_added, $result.sessions_copied) -ForegroundColor Green
+    }
+  }
+  catch {
+    Write-Host ("Warning: failed to repair personal profile state: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+  }
+}
+
 Set-CoreShellEnvironment
 Add-CommonToolPaths
 Add-GitToPath
+Ensure-IndependentProfileRoots
+Ensure-IndependentProfileArtifacts
+Repair-PersonalProfileState
 Update-ProfileConfigHardening
 
 function Update-CodexCli() {
